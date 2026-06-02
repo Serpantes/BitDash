@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"bitdash/backend/internal/cache"
 	"bitdash/backend/internal/delivery"
 	"bitdash/backend/internal/repository"
 	"bitdash/backend/internal/usecase"
@@ -16,6 +17,7 @@ func main() {
 	external := os.Getenv("EXTERNAL_API_URL")
 	bitjitaBaseURL := os.Getenv("BITJITA_BASE_URL")
 	playerResponseFile := os.Getenv("PLAYER_RESPONSE_FILE")
+	itemNameFile := os.Getenv("ITEM_NAME_FILE")
 	if external == "" {
 		external = "https://api.example.com/data"
 	}
@@ -25,6 +27,11 @@ func main() {
 	if playerResponseFile == "" {
 		playerResponseFile = "test.json"
 	}
+	if itemNameFile == "" {
+		itemNameFile = "data/item-names.json"
+	}
+
+	cacheTTL := 30 * time.Second
 
 	repo := repository.NewExternalClient(external)
 	handler := delivery.NewProxyHandler(repo)
@@ -32,23 +39,32 @@ func main() {
 	playerStore := repository.NewPlayerFileStore(playerResponseFile)
 	playerService := usecase.NewPlayerService(playerSource, playerStore)
 	playerHandler := delivery.NewPlayerHandler(playerService)
+	bitjitaCache := cache.New(cacheTTL)
+	bitjitaProxyHandler := delivery.NewBitjitaProxyHandler(bitjitaBaseURL, bitjitaCache)
+
+	itemNameStore, err := repository.NewItemNameStore(itemNameFile)
+	if err != nil {
+		log.Fatalf("item name store: %v", err)
+	}
+	itemNamesHandler := delivery.NewItemNamesHandler(bitjitaBaseURL, itemNameStore)
 
 	http.HandleFunc("/api/data", handler)
 	http.HandleFunc("/api/health", delivery.NewHealthHandler())
 	http.HandleFunc("/api/ping", delivery.NewPingHandler())
 	http.HandleFunc("/api/players/", playerHandler)
+	http.HandleFunc("/api/bitjita/", bitjitaProxyHandler)
+	http.HandleFunc("/api/item-names", itemNamesHandler)
 
-	// Serve static frontend in production from ../frontend/dist if exists
 	fs := http.FileServer(http.Dir("../frontend/dist"))
 	http.Handle("/", fs)
 
 	server := &http.Server{
 		Addr:         addr,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 3 * time.Minute,
 	}
 
-	log.Printf("Starting backend on %s, proxy -> %s, bitjita -> %s, player-response-file -> %s", addr, external, bitjitaBaseURL, playerResponseFile)
+	log.Printf("Starting backend on %s, proxy -> %s, bitjita -> %s, player-response-file -> %s, item-name-file -> %s", addr, external, bitjitaBaseURL, playerResponseFile, itemNameFile)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
