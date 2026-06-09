@@ -26,9 +26,11 @@ export default {
 .flex-1 { flex: 1; min-width: 240px; }
 .flex-2 { flex: 2; min-width: 320px; }
 .card {
-  background: white;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 18px 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(2,6,23,0.06);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
 }
 </style>

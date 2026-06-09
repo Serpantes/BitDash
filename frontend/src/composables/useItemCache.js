@@ -1,16 +1,7 @@
-// In-memory item name cache backed by the backend (/api/item-names).
-// Names are persisted on the server side (data/item-names.json).
-// The in-memory map avoids re-requesting names already known in this session.
-
 import { reactive } from 'vue'
 
-// Reactive so templates update after prefetch fills the cache (plain objects would not re-render).
-const cache = reactive({}) // key -> name, e.g. "i:1000" -> "Stone"
+const cache = reactive({})
 
-/**
- * Build the cache key used by both this module and the backend store.
- * itemType 1 = cargo → "c:{id}", otherwise → "i:{id}"
- */
 function cacheKey(itemType, itemId) {
   return itemType === 1 ? `c:${itemId}` : `i:${itemId}`
 }
@@ -24,29 +15,65 @@ export function useItemCache() {
     return cache[cacheKey(itemType, itemId)] ?? null
   }
 
-  /**
-   * Resolve display name for a pocket contents object.
-   * Handles both formats:
-   *   - regular inventory: { itemId, itemType: 0|1 }
-   *   - housing inventory: { item_id, item_type: "item"|"cargo" }
-   * Returns cached name or "#id" fallback.
-   */
-  function resolveName(contents) {
-    if (!contents) return '?'
-    const id = contents.itemId ?? contents.item_id
-    if (!id) return '?'
-    const isCargo = contents.itemType === 1 || contents.item_type === 'cargo'
-    return get(isCargo ? 1 : 0, id) ?? `#${id}`
+  function normalizeMeta(raw, type, fallbackId = null) {
+    if (typeof raw === 'string') return { name: raw, type }
+    if (!raw || typeof raw !== 'object') return null
+    return {
+      name: raw.name ?? raw.itemName ?? raw.item_name ?? (fallbackId != null ? `#${fallbackId}` : null),
+      iconAssetName: raw.iconAssetName ?? raw.icon_asset_name ?? null,
+      tier: raw.tier ?? raw.itemTier ?? raw.item_tier ?? null,
+      rarityStr: raw.rarityStr ?? raw.itemRarityStr ?? raw.item_rarity_str ?? null,
+      type,
+    }
   }
 
-  /**
-   * Collect all unknown item/cargo IDs from inventories, request their names
-   * from the backend in a single POST /api/item-names call, and store results.
-   * Handles both regular ({ pockets }) and housing ({ inventory }) formats.
-   */
-  async function prefetch(inventories) {
-    const requests = []
+  function setMeta(itemType, itemId, raw) {
+    const id = itemId == null ? null : Number(itemId)
+    if (!Number.isFinite(id)) return
+    const type = itemType === 1 ? 1 : 0
+    const meta = normalizeMeta(raw, type, id)
+    if (!meta) return
+    if (!meta.name) meta.name = `#${id}`
+    cache[cacheKey(type, id)] = meta
+  }
 
+  function catalogEntries(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => [item.id ?? item.itemId ?? item.item_id, item])
+    }
+    if (value && typeof value === 'object') {
+      return Object.entries(value).map(([id, item]) => [item?.id ?? item?.itemId ?? item?.item_id ?? id, item])
+    }
+    return []
+  }
+
+  function seedCatalog(source) {
+    const items = catalogEntries(source?.items)
+    const cargos = catalogEntries(source?.cargos ?? source?.cargo)
+    items.forEach(([id, item]) => setMeta(0, id, item))
+    cargos.forEach(([id, cargo]) => setMeta(1, id, cargo))
+  }
+
+  function resolveName(contents) {
+    return resolveItem(contents).name
+  }
+
+  function resolveItem(contents) {
+    if (!contents) return { name: '?', type: 0 }
+    const id = contents.itemId ?? contents.item_id
+    const isCargo = contents.itemType === 1 || contents.item_type === 'cargo'
+    const type = isCargo ? 1 : 0
+    if (!id) return { name: '?', type }
+    return get(type, id) ?? { name: `#${id}`, type }
+  }
+
+  async function prefetch(inventories) {
+    if (!Array.isArray(inventories)) {
+      seedCatalog(inventories)
+      inventories = inventories?.inventories ?? []
+    }
+
+    const requests = []
     for (const inv of inventories) {
       const pockets = inv.pockets ?? inv.inventory ?? []
       for (const p of pockets) {
@@ -56,22 +83,18 @@ export function useItemCache() {
         if (!id) continue
         const isCargo = c.itemType === 1 || c.item_type === 'cargo'
         const type = isCargo ? 1 : 0
-        if (!has(type, id)) {
-          requests.push({ id: Number(id), type })
-        }
+        if (!has(type, id)) requests.push({ id: Number(id), type })
       }
     }
 
-    if (requests.length === 0) return
-
-    // Deduplicate
     const seen = new Set()
     const unique = requests.filter((r) => {
-      const k = cacheKey(r.type, r.id)
-      if (seen.has(k)) return false
-      seen.add(k)
+      const key = cacheKey(r.type, r.id)
+      if (seen.has(key)) return false
+      seen.add(key)
       return true
     })
+    if (unique.length === 0) return
 
     try {
       const res = await fetch('/api/item-names', {
@@ -81,14 +104,14 @@ export function useItemCache() {
       })
       if (!res.ok) return
       const data = await res.json()
-      for (const [key, name] of Object.entries(data)) {
-        cache[key] = name
+      for (const [key, meta] of Object.entries(data)) {
+        const type = key.startsWith('c:') ? 1 : 0
+        cache[key] = normalizeMeta(meta, type) ?? { name: String(meta), type }
       }
     } catch {
-      // Non-fatal; UI will show "#id" fallbacks
+      // Non-fatal; UI will show #id fallbacks.
     }
   }
 
-  return { resolveName, prefetch, cache }
+  return { resolveName, resolveItem, prefetch, seedCatalog, cache }
 }
-

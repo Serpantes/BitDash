@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -16,7 +17,7 @@ type bitjitaProxyHandler struct {
 }
 
 // NewBitjitaProxyHandler returns a handler that proxies /api/bitjita/* → baseURL/api/*
-// with in-memory caching for GET requests. POST bodies are forwarded without caching.
+// with in-memory caching for GET and selected POST requests.
 func NewBitjitaProxyHandler(baseURL string, c *cache.Cache) func(http.ResponseWriter, *http.Request) {
 	h := &bitjitaProxyHandler{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -50,19 +51,28 @@ func (h *bitjitaProxyHandler) handle(w http.ResponseWriter, r *http.Request) {
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	if r.Method == http.MethodGet {
-		if data, ok := h.cache.Get(targetURL); ok {
+	var reqBody io.Reader
+	cacheKey := targetURL
+	if r.Method == http.MethodPost {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+		reqBody = bytes.NewReader(body)
+		if path == "/market/prices/bulk" {
+			cacheKey = targetURL + "\n" + string(body)
+		}
+	}
+
+	if r.Method == http.MethodGet || (r.Method == http.MethodPost && path == "/market/prices/bulk") {
+		if data, ok := h.cache.Get(cacheKey); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			w.Write(data)
 			return
 		}
-	}
-
-	var reqBody io.Reader
-	if r.Method == http.MethodPost {
-		reqBody = r.Body
-		defer r.Body.Close()
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, reqBody)
@@ -90,8 +100,8 @@ func (h *bitjitaProxyHandler) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method == http.MethodGet && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		h.cache.Set(targetURL, respBody)
+	if (r.Method == http.MethodGet || (r.Method == http.MethodPost && path == "/market/prices/bulk")) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		h.cache.Set(cacheKey, respBody)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

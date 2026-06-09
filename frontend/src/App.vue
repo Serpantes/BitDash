@@ -11,14 +11,12 @@
           @click="activeTab = tab.id"
         >
           {{ tab.label }}
-          <span v-if="tab.id === 'dashboard' && pinned.length" class="tab-badge">{{ pinned.length }}</span>
         </button>
       </nav>
     </header>
     <main>
       <Dashboard v-if="activeTab === 'server'" />
       <PinnedDashboard v-else-if="activeTab === 'dashboard'" />
-      <PlayerInventory v-else-if="activeTab === 'inventory'" />
       <MarketTab v-else-if="activeTab === 'market'" />
     </main>
   </div>
@@ -27,38 +25,59 @@
 <script>
 import { ref } from 'vue'
 import Dashboard from './components/Dashboard.vue'
-import PlayerInventory from './components/PlayerInventory.vue'
 import PinnedDashboard from './components/PinnedDashboard.vue'
-import { usePinned } from './composables/usePinned'
-
 import MarketTab from './components/MarketTab.vue'
 
 export default {
-  components: { Dashboard, PlayerInventory, PinnedDashboard, MarketTab },
+  components: { Dashboard, PinnedDashboard, MarketTab },
   setup() {
     const activeTab = ref('server')
-    const { pinned } = usePinned()
     const tabs = [
       { id: 'server', label: 'Серверы' },
       { id: 'dashboard', label: 'Дашборд' },
-      { id: 'inventory', label: 'Персонаж' },
       { id: 'market', label: 'Рынок' },
     ]
-    return { activeTab, tabs, pinned }
+    return { activeTab, tabs }
   },
 }
 </script>
 
 <style>
+:root {
+  --app-bg: #171625;
+  --app-bg-soft: #252437;
+  --surface: #252437;
+  --surface-raised: #2f2e43;
+  --surface-hover: #35344a;
+  --border: #45435c;
+  --border-strong: #6a687e;
+  --text: #f4f2ff;
+  --text-soft: #d7d3ea;
+  --muted: #a7a1bd;
+  --muted-strong: #c4bfd7;
+  --accent: #8aa4ff;
+  --accent-strong: #6f8eff;
+  --danger: #ff8a9a;
+  --success: #75e0a7;
+  --warning: #f8c66d;
+  color-scheme: dark;
+}
 * { box-sizing: border-box; }
-.app { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 16px; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(111, 142, 255, 0.14), transparent 34rem),
+    linear-gradient(180deg, #171625 0%, #201f31 100%);
+  color: var(--text);
+}
+.app { min-height: 100vh; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 16px; }
 .header {
   display: flex;
   align-items: center;
   gap: 24px;
   margin-bottom: 18px;
 }
-.logo { font-size: 22px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; }
+.logo { font-size: 22px; font-weight: 800; color: var(--text); letter-spacing: -0.5px; }
 .tabs { display: flex; gap: 4px; }
 .tab {
   padding: 6px 16px;
@@ -67,25 +86,10 @@ export default {
   background: transparent;
   font-size: 14px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--muted);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.tab:hover { background: #f1f5f9; color: #0f172a; }
-.tab.active { background: #3b82f6; color: white; }
-.tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  margin-left: 5px;
-  background: #ef4444;
-  color: white;
-  border-radius: 9px;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-}
+.tab:hover { background: var(--surface-hover); color: var(--text); }
+.tab.active { background: var(--accent-strong); color: white; }
 </style>

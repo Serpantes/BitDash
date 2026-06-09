@@ -13,7 +13,11 @@ import (
 )
 
 func main() {
-	addr := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8090"
+	}
+	addr := ":" + port
 	external := os.Getenv("EXTERNAL_API_URL")
 	bitjitaBaseURL := os.Getenv("BITJITA_BASE_URL")
 	playerResponseFile := os.Getenv("PLAYER_RESPONSE_FILE")
@@ -32,6 +36,7 @@ func main() {
 	}
 
 	cacheTTL := 30 * time.Second
+	iconCacheTTL := 24 * time.Hour
 
 	repo := repository.NewExternalClient(external)
 	handler := delivery.NewProxyHandler(repo)
@@ -41,6 +46,8 @@ func main() {
 	playerHandler := delivery.NewPlayerHandler(playerService)
 	bitjitaCache := cache.New(cacheTTL)
 	bitjitaProxyHandler := delivery.NewBitjitaProxyHandler(bitjitaBaseURL, bitjitaCache)
+	bitjitaIconCache := cache.New(iconCacheTTL)
+	bitjitaIconHandler := delivery.NewBitjitaIconHandler(bitjitaBaseURL, bitjitaIconCache)
 
 	itemNameStore, err := repository.NewItemNameStore(itemNameFile)
 	if err != nil {
@@ -53,6 +60,7 @@ func main() {
 	http.HandleFunc("/api/ping", delivery.NewPingHandler())
 	http.HandleFunc("/api/players/", playerHandler)
 	http.HandleFunc("/api/bitjita/", bitjitaProxyHandler)
+	http.HandleFunc("/api/bitjita-icon", bitjitaIconHandler)
 	http.HandleFunc("/api/item-names", itemNamesHandler)
 
 	fs := http.FileServer(http.Dir("../frontend/dist"))

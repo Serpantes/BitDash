@@ -63,6 +63,11 @@ export default {
 
       const { labels, values } = parseData(chartData.value)
       if (values.length === 0) return
+      const css = getComputedStyle(document.documentElement)
+      const accent = css.getPropertyValue('--accent').trim() || '#8aa4ff'
+      const textSoft = css.getPropertyValue('--text-soft').trim() || '#d7d3ea'
+      const muted = css.getPropertyValue('--muted').trim() || '#a7a1bd'
+      const border = css.getPropertyValue('--border').trim() || '#45435c'
 
       if (chartInstance) {
         chartInstance.destroy()
@@ -77,8 +82,8 @@ export default {
             {
               label: 'Игроков онлайн',
               data: values,
-              borderColor: '#3b82f6',
-              backgroundColor: 'rgba(59,130,246,0.15)',
+              borderColor: accent,
+              backgroundColor: 'rgba(138, 164, 255, 0.15)',
               borderWidth: 2,
               pointRadius: 2,
               tension: 0.3,
@@ -92,6 +97,11 @@ export default {
           plugins: {
             legend: { display: false },
             tooltip: {
+              titleColor: textSoft,
+              bodyColor: textSoft,
+              backgroundColor: '#252437',
+              borderColor: border,
+              borderWidth: 1,
               callbacks: {
                 label: (ctx) => ` ${ctx.parsed.y} игроков`,
               },
@@ -99,13 +109,13 @@ export default {
           },
           scales: {
             x: {
-              ticks: { maxTicksLimit: 8, font: { size: 11 } },
-              grid: { display: false },
+              ticks: { maxTicksLimit: 8, font: { size: 11 }, color: muted },
+              grid: { display: false, color: border },
             },
             y: {
               beginAtZero: false,
-              ticks: { font: { size: 11 } },
-              grid: { color: '#f1f5f9' },
+              ticks: { font: { size: 11 }, color: muted },
+              grid: { color: border },
             },
           },
         },
@@ -139,17 +149,17 @@ export default {
   align-items: center;
   margin-bottom: 12px;
 }
-.card-title { font-size: 15px; font-weight: 600; color: #1e293b; }
+.card-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .refresh-btn {
   font-size: 18px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--muted);
   user-select: none;
   transition: color 0.15s;
 }
-.refresh-btn:hover { color: #3b82f6; }
+.refresh-btn:hover { color: var(--accent); }
 .chart-wrap { position: relative; height: 220px; }
 .chart-wrap canvas { width: 100% !important; height: 100% !important; }
-.placeholder, .error-msg { font-size: 14px; color: #64748b; padding: 8px 0; }
-.error-msg { color: #b91c1c; }
+.placeholder, .error-msg { font-size: 14px; color: var(--muted); padding: 8px 0; }
+.error-msg { color: var(--danger); }
 </style>

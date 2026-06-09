@@ -75,10 +75,21 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(row, i) in enrichedRows" :key="row.entityId ?? row.orderEntityId ?? i">
+            <tr
+              v-for="(row, i) in enrichedRows"
+              :key="row.entityId ?? row.orderEntityId ?? i"
+              class="market-row"
+              :class="{ 'market-row--tiered': row.tierRowStyle }"
+              :style="row.tierRowStyle"
+            >
               <td class="cell-name">
-                <span>{{ row.displayName }}</span>
-                <span v-if="row.isCargo" class="cargo-badge">cargo</span>
+                <ItemCard
+                  :name="row.displayName"
+                  :icon-asset-name="row.iconAssetName"
+                  :item-type="row.itemTypeValue"
+                  :tier="row.tier"
+                  :rarity-str="row.rarityStr"
+                />
               </td>
               <td class="num">{{ row.qtyDisplay }}</td>
               <td class="num mono">{{ row.lotPriceDisplay }}</td>
@@ -117,6 +128,9 @@
 import { ref, computed, watch } from 'vue'
 import { fetchBitjita, postBitjita } from '../api'
 import { useMarketPlayer } from '../composables/useMarketPlayer'
+import { useItemCache } from '../composables/useItemCache'
+import { TIER_COLORS, hexToRgb, tierNumber } from '../itemVisuals'
+import ItemCard from './ItemCard.vue'
 
 const BULK_CHUNK = 100
 
@@ -194,6 +208,18 @@ function marketReference(stats) {
   return empty
 }
 
+function tierRowStyle(tier) {
+  const normalized = tierNumber(tier)
+  const color = normalized ? TIER_COLORS[normalized] : null
+  const rgb = hexToRgb(color)
+  if (!color || !rgb) return null
+  return {
+    '--market-row-tier': color,
+    '--market-row-tier-bg': `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.18)`,
+    '--market-row-tier-bg-hover': `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.26)`,
+  }
+}
+
 async function fetchBulkMaps(itemIds, cargoIds) {
   const items = {}
   const cargo = {}
@@ -216,6 +242,7 @@ async function fetchBulkMaps(itemIds, cargoIds) {
 
 export default {
   name: 'MarketTab',
+  components: { ItemCard },
   setup() {
     const query = ref('')
     const searching = ref(false)
@@ -229,6 +256,7 @@ export default {
     const loadError = ref(null)
 
     const { selectedPlayer, setPlayer, clearPlayer } = useMarketPlayer()
+    const { resolveItem, prefetch, seedCatalog } = useItemCache()
 
     async function searchPlayer() {
       const q = query.value.trim()
@@ -273,12 +301,21 @@ export default {
       try {
         const pid = selectedPlayer.value.entityId
         const data = await fetchBitjita(`/players/${pid}/market`)
+        seedCatalog(data)
         const sells = Array.isArray(data.sellOrders)
           ? data.sellOrders
           : Array.isArray(data.sell_orders)
             ? data.sell_orders
             : []
         sellOrders.value = sells
+        await prefetch([{
+          pockets: sells.map((order) => ({
+            contents: {
+              itemId: orderItemId(order),
+              itemType: orderItemType(order),
+            },
+          })),
+        }])
 
         const itemIds = [
           ...new Set(
@@ -333,7 +370,9 @@ export default {
         const name =
           o.itemName ??
           o.item_name ??
-          (orderItemId(o) != null ? `#${orderItemId(o)}` : '?')
+          o.name ??
+          resolveItem({ itemId: orderItemId(o), itemType: orderItemType(o) }).name
+        const meta = resolveItem({ itemId: orderItemId(o), itemType: orderItemType(o) })
 
         const claim =
           o.claimName ??
@@ -348,6 +387,11 @@ export default {
           entityId: o.entityId ?? o.orderEntityId ?? o.entity_id,
           displayName: name,
           isCargo,
+          itemTypeValue: isCargo ? 1 : 0,
+          iconAssetName: o.iconAssetName ?? o.icon_asset_name ?? o.itemIconAssetName ?? o.item_icon_asset_name ?? meta.iconAssetName ?? null,
+          tier: o.tier ?? o.itemTier ?? o.item_tier ?? meta.tier ?? null,
+          tierRowStyle: tierRowStyle(o.tier ?? o.itemTier ?? o.item_tier ?? meta.tier ?? null),
+          rarityStr: o.rarityStr ?? o.itemRarityStr ?? o.item_rarity_str ?? meta.rarityStr ?? null,
           qtyDisplay: formatCoinsBig(qtyBn),
           lotPriceDisplay: lotBn != null ? formatCoinsBig(lotBn) : '—',
           unitPriceDisplay: unitBn != null ? formatCoinsBig(unitBn) : '—',
@@ -396,9 +440,11 @@ export default {
 
 <style scoped>
 .card {
-  background: white;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07), 0 4px 16px rgba(2, 6, 23, 0.06);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
 }
 
 .market-tab {
@@ -428,18 +474,23 @@ export default {
 .search-input {
   flex: 1;
   padding: 8px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
   font-size: 14px;
   outline: none;
 }
+.search-input::placeholder {
+  color: var(--muted);
+}
 .search-input:focus {
-  border-color: #3b82f6;
+  border-color: var(--accent);
 }
 
 .search-btn {
   padding: 8px 18px;
-  background: #3b82f6;
+  background: var(--accent-strong);
   color: white;
   border: none;
   border-radius: 7px;
@@ -456,9 +507,10 @@ export default {
   list-style: none;
   margin: 10px 0 0;
   padding: 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 7px;
   overflow: hidden;
+  background: var(--surface-raised);
 }
 
 .result-item {
@@ -472,27 +524,27 @@ export default {
 }
 
 .result-item:not(:last-child) {
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--border);
 }
 
 .result-item:hover {
-  background: #f8fafc;
+  background: var(--surface-hover);
 }
 
 .player-name {
   font-weight: 500;
-  color: #0f172a;
+  color: var(--text);
 }
 
 .player-meta {
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .selected-bar {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -509,12 +561,12 @@ export default {
 }
 
 .selected-label {
-  color: #64748b;
+  color: var(--muted);
 }
 
 .player-id {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--muted);
   font-family: ui-monospace, monospace;
 }
 
@@ -526,37 +578,37 @@ export default {
 .ghost-btn {
   padding: 6px 12px;
   border-radius: 6px;
-  border: 1px solid #e2e8f0;
-  background: white;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
   font-size: 13px;
-  color: #475569;
+  color: var(--text-soft);
   cursor: pointer;
 }
 
 .ghost-btn:hover:not(:disabled) {
-  background: #f8fafc;
+  background: var(--surface-hover);
 }
 
 .ghost-btn.danger:hover:not(:disabled) {
-  border-color: #fecaca;
-  color: #b91c1c;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .placeholder {
   font-size: 14px;
-  color: #64748b;
+  color: var(--muted);
   padding: 18px 20px;
 }
 
 .error-msg {
   font-size: 14px;
-  color: #b91c1c;
+  color: var(--danger);
   padding: 14px 18px;
 }
 
 .hint-card {
   font-size: 14px;
-  color: #64748b;
+  color: var(--muted);
   line-height: 1.55;
   padding: 18px 20px;
 }
@@ -568,21 +620,21 @@ export default {
 
 .table-head {
   padding: 14px 18px 10px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--border);
 }
 
 .table-title {
   margin: 0;
   font-size: 16px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text);
 }
 
 .table-hint {
   display: block;
   margin-top: 6px;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--muted);
   line-height: 1.45;
 }
 
@@ -599,16 +651,31 @@ export default {
 .market-table th {
   text-align: left;
   padding: 10px 14px;
-  background: #f8fafc;
-  color: #64748b;
+  background: var(--surface-raised);
+  color: var(--muted);
   font-weight: 600;
   white-space: nowrap;
 }
 
 .market-table td {
   padding: 10px 14px;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid rgba(106, 104, 126, 0.32);
+  color: var(--text-soft);
   vertical-align: top;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.market-row--tiered td {
+  background: var(--market-row-tier-bg);
+  border-top-color: color-mix(in srgb, var(--market-row-tier) 52%, var(--border));
+}
+
+.market-row--tiered td:first-child {
+  box-shadow: inset 4px 0 0 var(--market-row-tier);
+}
+
+.market-row--tiered:hover td {
+  background: var(--market-row-tier-bg-hover);
 }
 
 .market-table th.num,
@@ -634,7 +701,7 @@ export default {
 .ref-kind {
   font-size: 11px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted);
   letter-spacing: 0.02em;
 }
 
@@ -642,7 +709,7 @@ export default {
   font-size: 17px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: #0f172a;
+  color: var(--text);
   line-height: 1.15;
 }
 
@@ -658,7 +725,7 @@ export default {
 
 .cell-name {
   font-weight: 500;
-  color: #1e293b;
+  color: var(--text);
 }
 
 .cargo-badge {
@@ -666,8 +733,8 @@ export default {
   margin-left: 6px;
   font-size: 10px;
   font-weight: 600;
-  background: #fef3c7;
-  color: #92400e;
+  background: rgba(248, 198, 109, 0.18);
+  color: var(--warning);
   padding: 1px 5px;
   border-radius: 5px;
   vertical-align: middle;
@@ -679,20 +746,20 @@ export default {
 }
 
 .muted {
-  color: #94a3b8;
+  color: var(--muted);
 }
 
 .diff-above {
-  color: #dc2626;
+  color: var(--danger);
   font-weight: 600;
 }
 
 .diff-below {
-  color: #15803d;
+  color: var(--success);
   font-weight: 600;
 }
 
 .diff-neutral {
-  color: #64748b;
+  color: var(--muted);
 }
 </style>

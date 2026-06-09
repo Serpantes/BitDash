@@ -1,2 +1,21 @@
-body { background:#f3f4f6; margin:0; }
-#app { max-width:1000px; margin:24px auto }
+:root {
+  background: #171625;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(111, 142, 255, 0.14), transparent 34rem),
+    linear-gradient(180deg, #171625 0%, #201f31 100%);
+  color: var(--text, #f4f2ff);
+}
+
+#app {
+  min-height: 100vh;
+}

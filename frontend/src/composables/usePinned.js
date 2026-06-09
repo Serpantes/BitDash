@@ -10,7 +10,6 @@ function load() {
   }
 }
 
-// Singleton reactive state
 const pinned = ref(load())
 
 watch(pinned, (val) => {
@@ -23,16 +22,24 @@ export function usePinned() {
   }
 
   function pin(player, inv) {
-    if (isPinned(inv.entityId)) return
+    pinBlock({
+      sourceType: 'player',
+      inventoryId: inv.entityId,
+      playerEntityId: player.entityId,
+      playerName: player.username,
+      inventoryName: inv.inventoryName,
+      regionId: inv.regionId,
+      claimName: inv.claimName ?? null,
+    })
+  }
+
+  function pinBlock(block) {
+    if (!block?.inventoryId || isPinned(block.inventoryId)) return
     pinned.value = [
       ...pinned.value,
       {
-        inventoryId: inv.entityId,
-        playerEntityId: player.entityId,
-        playerName: player.username,
-        inventoryName: inv.inventoryName,
-        regionId: inv.regionId,
-        claimName: inv.claimName ?? null,
+        sourceType: 'player',
+        ...block,
       },
     ]
   }
@@ -41,5 +48,18 @@ export function usePinned() {
     pinned.value = pinned.value.filter((p) => p.inventoryId !== inventoryId)
   }
 
-  return { pinned, isPinned, pin, unpin }
+  function updatePinnedLayout(inventoryId, layout) {
+    pinned.value = pinned.value.map((p) => {
+      if (p.inventoryId !== inventoryId) return p
+      return {
+        ...p,
+        dashboardLayout: {
+          ...(p.dashboardLayout ?? {}),
+          ...layout,
+        },
+      }
+    })
+  }
+
+  return { pinned, isPinned, pin, pinBlock, unpin, updatePinnedLayout }
 }

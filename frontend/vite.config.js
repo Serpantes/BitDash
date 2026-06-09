@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: process.env.VITE_BACKEND_URL || 'http://127.0.0.1:8090',
         changeOrigin: true,
         // Match slow /api/item-names (many upstream lookups); avoid proxy socket bailouts.
         timeout: 180_000,
