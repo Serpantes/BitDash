@@ -63,7 +63,11 @@ func main() {
 	http.HandleFunc("/api/bitjita-icon", bitjitaIconHandler)
 	http.HandleFunc("/api/item-names", itemNamesHandler)
 
-	fs := http.FileServer(http.Dir("../frontend/dist"))
+	frontendDist := os.Getenv("FRONTEND_DIST")
+	if frontendDist == "" {
+		frontendDist = "../frontend/dist"
+	}
+	fs := http.FileServer(http.Dir(frontendDist))
 	http.Handle("/", fs)
 
 	server := &http.Server{

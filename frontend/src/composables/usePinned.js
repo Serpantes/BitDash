@@ -17,8 +17,8 @@ watch(pinned, (val) => {
 }, { deep: true })
 
 export function usePinned() {
-  function isPinned(inventoryId) {
-    return pinned.value.some((p) => p.inventoryId === inventoryId)
+  function isPinned(blockId) {
+    return pinned.value.some((p) => p.inventoryId === blockId)
   }
 
   function pin(player, inv) {
@@ -38,6 +38,7 @@ export function usePinned() {
     pinned.value = [
       ...pinned.value,
       {
+        blockType: 'inventory',
         sourceType: 'player',
         ...block,
       },
@@ -61,5 +62,12 @@ export function usePinned() {
     })
   }
 
-  return { pinned, isPinned, pin, pinBlock, unpin, updatePinnedLayout }
+  function updatePinnedBlock(inventoryId, patch) {
+    pinned.value = pinned.value.map((p) => {
+      if (p.inventoryId !== inventoryId) return p
+      return { ...p, ...patch }
+    })
+  }
+
+  return { pinned, isPinned, pin, pinBlock, unpin, updatePinnedLayout, updatePinnedBlock }
 }

@@ -1,8 +1,26 @@
 {
+  "i:1050001": {
+    "name": "Ferralith Ingot",
+    "iconAssetName": "GeneratedIcons/Other/GeneratedIcons/Items/FerralithIngot",
+    "tier": 1,
+    "rarityStr": "Common"
+  },
   "i:1262928328": {
     "name": "Deed: Pet Owl Blue and Orange",
     "iconAssetName": "GeneratedIcons/Other/GeneratedIcons/Items/PetOwlBlueOrange",
     "tier": -1,
     "rarityStr": "Uncommon"
+  },
+  "i:2050001": {
+    "name": "Pyrelite Ingot",
+    "iconAssetName": "GeneratedIcons/Other/GeneratedIcons/Items/PyreliteIngot",
+    "tier": 2,
+    "rarityStr": "Common"
+  },
+  "i:5050001": {
+    "name": "Luminite Ingot",
+    "iconAssetName": "GeneratedIcons/Other/GeneratedIcons/Items/LuminiteIngot",
+    "tier": 5,
+    "rarityStr": "Common"
   }
 }

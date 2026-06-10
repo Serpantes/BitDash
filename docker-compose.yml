@@ -1,0 +1,20 @@
+services:
+  bitdash:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${BITDASH_PORT:-8090}:8090"
+    environment:
+      PORT: "8090"
+      FRONTEND_DIST: /app/frontend/dist
+      ITEM_NAME_FILE: /app/data/item-names.json
+      PLAYER_RESPONSE_FILE: /var/lib/bitdash/players.json
+      BITJITA_BASE_URL: ${BITJITA_BASE_URL:-https://bitjita.com}
+      EXTERNAL_API_URL: ${EXTERNAL_API_URL:-https://api.example.com/data}
+    volumes:
+      - bitdash-data:/var/lib/bitdash
+    restart: unless-stopped
+
+volumes:
+  bitdash-data:

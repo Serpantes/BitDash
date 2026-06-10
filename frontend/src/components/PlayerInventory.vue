@@ -132,10 +132,11 @@ export default {
               seedCatalog(detail)
               return (detail.inventories ?? []).map((hi) => ({
                 entityId: hi.entityId,
-                inventoryName: detail.buildingName ?? 'House',
+                inventoryName: hi.buildingNickname || hi.buildingName || detail.buildingName || 'House',
                 regionId: detail.regionId ?? null,
                 claimName: detail.claimName ?? null,
-                buildingName: detail.buildingName ?? null,
+                buildingName: hi.buildingName ?? null,
+                houseName: detail.buildingName ?? null,
                 pockets: (hi.inventory ?? []).map((p) => ({
                   ...p,
                   contents: p.contents ? {
