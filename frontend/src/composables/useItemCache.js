@@ -87,6 +87,22 @@ export function useItemCache() {
       }
     }
 
+    await fetchMissingMeta(requests)
+  }
+
+  async function prefetchItems(items) {
+    if (!Array.isArray(items) || !items.length) return
+    const requests = []
+    for (const item of items) {
+      const id = Number(item.id ?? item.itemId ?? item.item_id)
+      if (!Number.isFinite(id)) continue
+      const type = item.itemType === 1 || item.type === 1 ? 1 : 0
+      if (!has(type, id)) requests.push({ id, type })
+    }
+    await fetchMissingMeta(requests)
+  }
+
+  async function fetchMissingMeta(requests) {
     const seen = new Set()
     const unique = requests.filter((r) => {
       const key = cacheKey(r.type, r.id)
@@ -113,5 +129,5 @@ export function useItemCache() {
     }
   }
 
-  return { resolveName, resolveItem, prefetch, seedCatalog, cache }
+  return { resolveName, resolveItem, prefetch, prefetchItems, seedCatalog, cache }
 }

@@ -10,7 +10,7 @@
 
     <div v-if="pinned.length === 0" class="card empty-state">
       <div class="empty-title">Нет закреплённых блоков</div>
-      <div class="empty-hint">Нажми «Добавить блок», чтобы закрепить инвентарь или рынок игрока.</div>
+      <div class="empty-hint">Нажми «Добавить блок», чтобы закрепить инвентарь, рынок, планировщик, персонажа или карту.</div>
     </div>
 
     <div
@@ -53,9 +53,7 @@
               <span v-if="marketDeviationCount(item.inventoryId, 'above') > 0" class="market-dev-badge market-dev-badge--above">▲ {{ marketDeviationCount(item.inventoryId, 'above') }}</span>
               <span v-if="marketDeviationCount(item.inventoryId, 'below') > 0" class="market-dev-badge market-dev-badge--below">▼ {{ marketDeviationCount(item.inventoryId, 'below') }}</span>
             </template>
-            <template v-else-if="isCharacterBlock(item)">
-            </template>
-            <span v-else class="inv-player">{{ blockOwnerLabel(item) }}</span>
+            <span v-else-if="!isCharacterBlock(item) && !isMapBlock(item) && !isPlannerBlock(item)" class="inv-player">{{ blockOwnerLabel(item) }}</span>
           </div>
           <div class="inv-header-actions">
             <div v-if="isMarketBlock(item)" class="tile-size-switch">
@@ -74,15 +72,57 @@
                 Больш.
               </button>
             </div>
+            <div v-if="isMapBlock(item)" class="tile-size-switch">
+              <button
+                class="tile-size-btn"
+                :class="{ active: mapTileSize(item.inventoryId) === 'small' }"
+                @click.stop="setMapTileSize(item.inventoryId, 'small')"
+              >
+                Мини
+              </button>
+              <button
+                class="tile-size-btn"
+                :class="{ active: mapTileSize(item.inventoryId) === 'large' }"
+                @click.stop="setMapTileSize(item.inventoryId, 'large')"
+              >
+                Больш.
+              </button>
+            </div>
+            <button
+              v-if="isPlannerBlock(item)"
+              class="edit-block-btn"
+              type="button"
+              title="Изменить"
+              @click.stop="openEditPlannerWizard(item.inventoryId)"
+            >✎</button>
             <button class="unpin-btn" @click="unpin(item.inventoryId)" title="Открепить">✕</button>
           </div>
         </div>
 
         <div v-if="state[item.inventoryId]?.loading && blockIsEmpty(item)" class="placeholder">Загрузка...</div>
         <div v-else-if="state[item.inventoryId]?.error && blockIsEmpty(item)" class="error-msg">{{ state[item.inventoryId].error }}</div>
+        <template v-else-if="isMapBlock(item)">
+          <div class="map-block" :class="{ 'map-block--small': mapTileSize(item.inventoryId) === 'small' }">
+            <iframe
+              :ref="(el) => setMapIframeRef(item.inventoryId, el)"
+              class="map-iframe"
+              :class="{ 'map-iframe--small': mapTileSize(item.inventoryId) === 'small' }"
+              :src="mapBlockUrl(item)"
+              title="BitCraft Map"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              allowfullscreen
+              @load="onMapIframeLoad(item.inventoryId)"
+            />
+          </div>
+        </template>
         <template v-else-if="isCharacterBlock(item)">
           <div v-if="!characterBars(item.inventoryId)" class="empty-inv">нет данных</div>
-          <div v-else class="char-stats">
+          <div
+            v-else
+            class="char-stats"
+            :class="{ 'char-stats--no-food': characterBuffsLoaded(item.inventoryId) && !characterHasFoodBuff(item.inventoryId) }"
+          >
             <div class="char-bar-group">
               <div class="char-bar-header">
                 <span class="char-bar-label char-bar-label--hp">❤ Здоровье</span>
@@ -101,14 +141,40 @@
                 <div class="char-bar-fill char-bar-fill--stamina" :style="{ width: `${vitalsBarPercent(characterBars(item.inventoryId).stamina)}%` }"></div>
               </div>
             </div>
-            <div class="char-bar-group">
+            <div class="char-bar-group char-bar-group--satiation">
               <div class="char-bar-header">
                 <span class="char-bar-label char-bar-label--satiation">🍖 Насыщение</span>
+                <span
+                  v-if="characterBuffsLoaded(item.inventoryId) && !characterHasFoodBuff(item.inventoryId)"
+                  class="char-food-warn"
+                >
+                  Нет еды
+                </span>
                 <span class="char-bar-value">{{ formatVitalsValue(characterBars(item.inventoryId).satiation) }}</span>
               </div>
               <div class="char-bar-track">
                 <div class="char-bar-fill char-bar-fill--satiation" :style="{ width: `${vitalsBarPercent(characterBars(item.inventoryId).satiation)}%` }"></div>
               </div>
+            </div>
+            <div class="char-buffs">
+              <div class="char-buffs-title">Баффы</div>
+              <div v-if="!characterActiveBuffs(item.inventoryId).length" class="char-buffs-empty">
+                {{ characterBuffsLoaded(item.inventoryId) ? 'нет активных' : '—' }}
+              </div>
+              <ul v-else class="char-buff-list">
+                <li
+                  v-for="buff in characterActiveBuffs(item.inventoryId)"
+                  :key="buff.id"
+                  class="char-buff-item"
+                  :class="{
+                    'char-buff-item--food': buff.isFoodBuff,
+                    'char-buff-item--bad': !buff.beneficial,
+                  }"
+                >
+                  <span class="char-buff-name">{{ buff.description }}</span>
+                  <span class="char-buff-time">{{ buff.timeLabel }}</span>
+                </li>
+              </ul>
             </div>
             <div class="char-meta">
               <span class="char-meta-updated">Обновлено: {{ state[item.inventoryId]?.updatedAt ?? '—' }}</span>
@@ -116,6 +182,68 @@
           </div>
         </template>
         <template v-else-if="isMarketBlock(item)">
+          <div class="market-block-body">
+            <div class="market-item-search">
+              <form class="market-item-search-form" @submit.prevent="searchMarketItems(item.inventoryId)">
+                <input
+                  :value="marketSearchQuery(item.inventoryId)"
+                  class="market-item-search-input"
+                  type="text"
+                  placeholder="Цена предмета..."
+                  :disabled="marketSearchSearching(item.inventoryId)"
+                  @input="setMarketSearchQuery(item.inventoryId, $event.target.value)"
+                />
+                <button
+                  type="submit"
+                  class="market-item-search-btn"
+                  :disabled="marketSearchSearching(item.inventoryId) || marketSearchQuery(item.inventoryId).trim().length < 2"
+                >
+                  {{ marketSearchSearching(item.inventoryId) ? '...' : 'Найти' }}
+                </button>
+              </form>
+              <div v-if="marketSearchError(item.inventoryId)" class="market-item-search-error">{{ marketSearchError(item.inventoryId) }}</div>
+              <ul v-if="marketSearchResults(item.inventoryId).length" class="market-item-search-results">
+                <li v-for="result in marketSearchResults(item.inventoryId)" :key="`${result.itemType}-${result.id}`">
+                  <button type="button" class="market-item-search-result" @click="selectMarketSearchItem(item.inventoryId, result)">
+                    <ItemCard
+                      variant="mini"
+                      :name="result.name"
+                      :icon-asset-name="result.iconAssetName"
+                      :item-type="result.itemType"
+                      :tier="result.tier"
+                      :rarity-str="result.rarityStr"
+                    />
+                    <span class="market-item-search-result-name">{{ result.name }}</span>
+                  </button>
+                </li>
+              </ul>
+              <div v-if="marketSearchSelected(item.inventoryId)" class="market-item-price">
+                <div v-if="marketSearchPriceLoading(item.inventoryId)" class="market-item-price-loading">Загрузка цены...</div>
+                <div v-else class="market-item-price-card">
+                  <ItemCard
+                    variant="mini"
+                    :name="marketSearchSelected(item.inventoryId).name"
+                    :icon-asset-name="marketSearchSelected(item.inventoryId).iconAssetName"
+                    :item-type="marketSearchSelected(item.inventoryId).itemType"
+                    :tier="marketSearchSelected(item.inventoryId).tier"
+                    :rarity-str="marketSearchSelected(item.inventoryId).rarityStr"
+                  />
+                  <div class="market-item-price-lines">
+                    <div
+                      v-for="line in marketPriceLines(marketSearchStats(item.inventoryId))"
+                      :key="line.label"
+                      class="market-item-price-line"
+                    >
+                      <span class="market-small-label">{{ line.label }}</span>
+                      <span class="market-item-price-value">{{ line.value }}</span>
+                    </div>
+                    <div v-if="!marketPriceLines(marketSearchStats(item.inventoryId)).length" class="market-item-price-empty">нет данных о цене</div>
+                  </div>
+                  <button type="button" class="market-item-price-clear" title="Очистить" @click="clearMarketSearchItem(item.inventoryId)">✕</button>
+                </div>
+              </div>
+            </div>
+            <div class="market-orders">
           <div v-if="marketRows(item.inventoryId).length === 0" class="empty-inv">нет ордеров</div>
           <div v-else-if="marketTileSize(item.inventoryId) === 'small'" class="market-list market-list--small">
             <div v-for="(row, idx) in marketRows(item.inventoryId)" :key="row.rowKey ?? idx" class="market-row market-row--small" :class="marketRowDeviationClass(row.diffPct)">
@@ -168,6 +296,50 @@
               </div>
             </div>
           </div>
+            </div>
+          </div>
+        </template>
+        <template v-else-if="isPlannerBlock(item)">
+          <div class="planner-block">
+            <div v-if="plannerTarget(item.inventoryId)" class="planner-target planner-target--readonly">
+              <div class="planner-target-head">
+                <ItemCard
+                  variant="mini"
+                  :name="plannerItemMeta(plannerTarget(item.inventoryId)).name"
+                  :icon-asset-name="plannerItemMeta(plannerTarget(item.inventoryId)).iconAssetName"
+                  :item-type="plannerItemMeta(plannerTarget(item.inventoryId)).type"
+                  :tier="plannerItemMeta(plannerTarget(item.inventoryId)).tier"
+                />
+                <div class="planner-target-meta">
+                  <span class="planner-target-name">{{ plannerItemMeta(plannerTarget(item.inventoryId)).name }}</span>
+                  <span class="planner-target-qty">×{{ plannerQuantity(item.inventoryId) }}</span>
+                </div>
+              </div>
+              <div v-if="plannerActiveRecipe(item.inventoryId)" class="planner-recipe-hint">
+                {{ plannerActiveRecipe(item.inventoryId).name }}
+                <span v-if="plannerActiveRecipe(item.inventoryId).buildingName"> · {{ plannerActiveRecipe(item.inventoryId).buildingName }}</span>
+                <span> · выход ×{{ plannerActiveRecipe(item.inventoryId).outputQuantity }}</span>
+              </div>
+            </div>
+            <div v-if="plannerLoading(item.inventoryId)" class="planner-loading">Считаем материалы...</div>
+            <div v-else-if="plannerBlockError(item.inventoryId)" class="planner-error">{{ plannerBlockError(item.inventoryId) }}</div>
+            <div v-else-if="plannerTarget(item.inventoryId) && !plannerHasRecipe(item.inventoryId)" class="planner-hint">Нет рецепта крафта — базовый ресурс.</div>
+            <div v-else-if="plannerTarget(item.inventoryId) && plannerMaterials(item.inventoryId).length === 0" class="planner-hint">Нет данных о материалах.</div>
+            <ul v-else-if="plannerMaterials(item.inventoryId).length" class="planner-materials">
+              <li v-for="mat in plannerMaterials(item.inventoryId)" :key="`${mat.itemType}-${mat.id}`" class="planner-material-row">
+                <ItemCard
+                  variant="mini"
+                  :name="plannerItemMeta(mat).name"
+                  :icon-asset-name="plannerItemMeta(mat).iconAssetName"
+                  :item-type="plannerItemMeta(mat).type"
+                  :tier="plannerItemMeta(mat).tier"
+                />
+                <span class="planner-material-name">{{ plannerItemMeta(mat).name }}</span>
+                <span class="planner-material-qty">{{ formatPlannerQty(mat.quantity) }}</span>
+              </li>
+            </ul>
+            <div v-else class="planner-hint">Нажмите ✎, чтобы настроить планировщик.</div>
+          </div>
         </template>
         <template v-else>
           <div v-if="!hasInventoryGrid(item.inventoryId)" class="empty-inv">пусто</div>
@@ -211,7 +383,9 @@
           <span class="wizard-step" :class="{ active: wizard.step === 'type', done: wizardStepIndex > 0 }">Тип</span>
           <span v-if="wizard.blockType === 'inventory'" class="wizard-step" :class="{ active: wizard.step === 'source', done: wizardStepIndex > 1 }">Источник</span>
           <span class="wizard-step" :class="{ active: wizard.step === 'search', done: wizardStepIndex > 2 }">Поиск</span>
+          <span v-if="wizard.blockType === 'planner'" class="wizard-step" :class="{ active: wizard.step === 'planner' }">Планировщик</span>
           <span v-if="wizard.blockType === 'inventory'" class="wizard-step" :class="{ active: wizard.step === 'inventory' }">Инвентарь</span>
+          <span v-if="wizard.blockType === 'market'" class="wizard-step" :class="{ active: wizard.step === 'search' }">Игрок</span>
           <span v-if="wizard.blockType === 'character'" class="wizard-step" :class="{ active: wizard.step === 'search' }">Игрок</span>
         </div>
 
@@ -228,6 +402,14 @@
             <span class="choice-title">Персонаж</span>
             <span class="choice-text">Показатели персонажа: ХП, Стамина и Насыщенность в виде полосок. Обновляются в реальном времени.</span>
           </button>
+          <button class="choice-card" :class="{ active: wizard.blockType === 'map' }" @click="chooseBlockType('map')">
+            <span class="choice-title">Карта</span>
+            <span class="choice-text">Интерактивная карта BitCraft из bitcraftmap.com.</span>
+          </button>
+          <button class="choice-card" :class="{ active: wizard.blockType === 'planner' }" @click="chooseBlockType('planner')">
+            <span class="choice-title">Планировщик</span>
+            <span class="choice-text">Выбор предмета и количества — список всех материалов для крафта с разбором по рецептам.</span>
+          </button>
         </div>
 
         <div v-else-if="wizard.step === 'source'" class="wizard-panel">
@@ -242,18 +424,15 @@
         </div>
 
         <div v-else-if="wizard.step === 'search'" class="wizard-panel">
-          <form class="wizard-search" @submit.prevent="searchWizard">
+          <div class="wizard-search">
             <input
               v-model="wizard.query"
               class="wizard-input"
               type="text"
-              :placeholder="wizard.blockType === 'market' || wizard.sourceType === 'player' ? 'Имя игрока...' : 'Название клейма...'"
-              :disabled="wizard.searching"
+              :placeholder="wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.sourceType === 'player' ? 'Имя игрока...' : 'Название клейма...'"
             />
-            <button class="add-block-btn" type="submit" :disabled="wizard.searching || !wizard.query.trim()">
-              {{ wizard.searching ? 'Ищу...' : 'Найти' }}
-            </button>
-          </form>
+            <span v-if="wizard.searching" class="wizard-searching-hint">...</span>
+          </div>
           <div v-if="wizard.error" class="wizard-error">{{ wizard.error }}</div>
           <div v-if="wizard.results.length" class="wizard-results">
             <button
@@ -311,8 +490,97 @@
           </div>
         </div>
 
+        <div v-else-if="wizard.step === 'planner'" class="wizard-panel wizard-planner-panel">
+          <div v-if="wizard.error" class="wizard-error">{{ wizard.error }}</div>
+          <div class="planner-search">
+            <input
+              :value="wizard.plannerQuery"
+              class="planner-search-input"
+              type="text"
+              placeholder="Предмет для крафта..."
+              @input="setWizardPlannerQuery($event.target.value)"
+            />
+            <span v-if="wizard.plannerSearching" class="planner-searching">...</span>
+          </div>
+          <ul v-if="wizard.plannerResults.length" class="planner-search-results wizard-planner-results">
+            <li v-for="result in wizard.plannerResults" :key="`${result.itemType}-${result.id}`">
+              <button
+                type="button"
+                class="planner-search-result"
+                :class="{ 'planner-search-result--active': wizard.plannerTarget?.id === result.id && wizard.plannerTarget?.itemType === result.itemType }"
+                @click="selectWizardPlannerTarget(result)"
+              >
+                <ItemCard
+                  variant="mini"
+                  :name="plannerItemMeta(result).name"
+                  :icon-asset-name="plannerItemMeta(result).iconAssetName"
+                  :item-type="plannerItemMeta(result).type"
+                  :tier="plannerItemMeta(result).tier"
+                />
+                <span class="planner-search-result-name">{{ plannerItemMeta(result).name }}</span>
+              </button>
+            </li>
+          </ul>
+          <div v-if="wizard.plannerTarget" class="planner-target wizard-planner-target">
+            <div class="planner-target-head">
+              <ItemCard
+                variant="mini"
+                :name="plannerItemMeta(wizard.plannerTarget).name"
+                :icon-asset-name="plannerItemMeta(wizard.plannerTarget).iconAssetName"
+                :item-type="plannerItemMeta(wizard.plannerTarget).type"
+                :tier="plannerItemMeta(wizard.plannerTarget).tier"
+              />
+              <div class="planner-target-meta">
+                <span class="planner-target-name">{{ plannerItemMeta(wizard.plannerTarget).name }}</span>
+                <label class="planner-qty-label">
+                  Кол-во
+                  <input
+                    class="planner-qty-input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    :value="wizard.plannerQuantity"
+                    @change="wizard.plannerQuantity = Math.max(1, Math.floor(Number($event.target.value) || 1))"
+                  />
+                </label>
+              </div>
+            </div>
+            <div v-if="wizard.plannerLoadingRecipes" class="planner-loading">Загрузка рецептов...</div>
+            <div v-else-if="wizard.plannerRecipeOptions.length > 1" class="planner-recipes">
+              <span class="planner-recipes-label">Рецепт</span>
+              <div class="planner-recipes-list">
+                <button
+                  v-for="recipe in wizard.plannerRecipeOptions"
+                  :key="recipe.id"
+                  type="button"
+                  class="planner-recipe-option"
+                  :class="{ 'planner-recipe-option--active': wizard.plannerSelectedRecipeId === String(recipe.id) }"
+                  :title="plannerRecipeOptionTitle(recipe)"
+                  @click="wizard.plannerSelectedRecipeId = String(recipe.id)"
+                >
+                  <span class="planner-recipe-option-title">{{ plannerRecipeOptionTitle(recipe) }}</span>
+                  <span class="planner-recipe-option-meta">{{ plannerRecipeOptionMeta(recipe) }}</span>
+                </button>
+              </div>
+            </div>
+            <div v-else-if="wizard.plannerRecipeOptions.length === 1" class="planner-recipe-hint">
+              {{ plannerRecipeOptionTitle(wizard.plannerRecipeOptions[0]) }}
+              <span> · {{ plannerRecipeOptionMeta(wizard.plannerRecipeOptions[0]) }}</span>
+            </div>
+          </div>
+        </div>
+
         <div class="modal-actions">
-          <button class="ghost-btn" type="button" @click="wizardBack" :disabled="wizard.step === 'type'">Назад</button>
+          <button
+            v-if="wizard.step === 'planner'"
+            class="add-block-btn"
+            type="button"
+            :disabled="!wizardPlannerCanConfirm || wizard.plannerLoadingRecipes"
+            @click="confirmWizardPlanner"
+          >
+            {{ wizard.editInventoryId ? 'Сохранить' : 'Добавить блок' }}
+          </button>
+          <button class="ghost-btn" type="button" @click="wizardBack" :disabled="wizard.step === 'type' && !wizard.editInventoryId">Назад</button>
           <button class="ghost-btn" type="button" @click="closeAddWizard">Отмена</button>
         </div>
       </div>
@@ -327,8 +595,13 @@ import { usePinned } from '../composables/usePinned'
 import { useItemCache } from '../composables/useItemCache'
 import { useBitjitaLive } from '../composables/useBitjitaLive'
 import { useStaminaAlerts } from '../composables/useStaminaAlerts'
+import { activeBuffsFromPayload, hasActiveFoodBuff } from '../playerBuffs'
 import { characterVitalsFromStats, formatVitalsValue, vitalsBarPercent } from '../playerStats'
+import { computeCraftMaterialsFromRecipes, listRecipeOptions, resolveRecipeId } from '../plannerCrafting'
+import { dedupePlannerSearchResults, normalizePlannerSearchEntry } from '../plannerSearch'
 import ItemCard from './ItemCard.vue'
+
+const SEARCH_DEBOUNCE_MS = 500
 
 export default {
   name: 'PinnedDashboard',
@@ -351,11 +624,35 @@ export default {
       selectedEntity: null,
       inventories: [],
       loadingInventories: false,
+      editInventoryId: null,
+      plannerQuery: '',
+      plannerSearching: false,
+      plannerResults: [],
+      plannerTarget: null,
+      plannerRecipeOptions: [],
+      plannerSelectedRecipeId: null,
+      plannerCraftRecipes: [],
+      plannerQuantity: 1,
+      plannerLoadingRecipes: false,
     })
-    const { resolveItem, prefetch, seedCatalog } = useItemCache()
+    const { resolveItem, prefetch, prefetchItems, seedCatalog } = useItemCache()
     const { syncPlayerSubscriptions, liveSnapshot, staminaByPlayer } = useBitjitaLive()
     const BULK_CHUNK = 100
-    const wizardSteps = ['type', 'source', 'search', 'inventory']
+    const MAP_EMBED_PATH = '/map-embed/'
+    const MAP_ROADS_LAYER = 'roadsLayer'
+    const mapIframeRefs = {}
+    const marketSearchState = reactive({})
+    const plannerBlockState = reactive({})
+    let wizardPlannerSearchTimer = null
+    let wizardPlannerSearchGen = 0
+    let wizardSearchTimer = null
+    let wizardSearchGen = 0
+    let mapUrlSyncTimer = null
+    const wizardSteps = computed(() => {
+      if (wizard.blockType === 'inventory') return ['type', 'source', 'search', 'inventory']
+      if (wizard.blockType === 'planner') return ['type', 'planner']
+      return ['type', 'search']
+    })
     const wizardInventoryCategoryOrder = [
       { id: 'inventory', label: 'Инвентарь' },
       { id: 'house', label: 'Дом' },
@@ -365,7 +662,12 @@ export default {
       { id: 'trade', label: 'Торговля' },
     ]
 
-    const wizardStepIndex = computed(() => wizardSteps.indexOf(wizard.step))
+    const wizardStepIndex = computed(() => wizardSteps.value.indexOf(wizard.step))
+    const wizardPlannerCanConfirm = computed(() => {
+      if (!wizard.plannerTarget?.id) return false
+      if (wizard.plannerRecipeOptions.length > 1 && !wizard.plannerSelectedRecipeId) return false
+      return true
+    })
     const wizardInventoryGroups = computed(() => {
       const buckets = Object.fromEntries(wizardInventoryCategoryOrder.map((cat) => [cat.id, { ...cat, items: [] }]))
       wizard.inventories.forEach((inv) => {
@@ -383,6 +685,11 @@ export default {
         if (wizard.blockType === 'character') return 'Найди игрока, чтобы следить за его показателями.'
         if (wizard.blockType === 'market' || wizard.sourceType === 'player') return 'Найди игрока по имени.'
         return 'Найди клейм по названию.'
+      }
+      if (wizard.step === 'planner') {
+        return wizard.editInventoryId
+          ? 'Измените предмет, рецепт и количество для этого блока.'
+          : 'Выберите предмет для крафта, рецепт и количество.'
       }
       return 'Выбери конкретный инвентарь для добавления.'
     })
@@ -446,6 +753,275 @@ export default {
     function isMarketBlock(pinItem) {
       return blockType(pinItem) === 'market'
     }
+    function isPlannerBlock(pinItem) {
+      return blockType(pinItem) === 'planner'
+    }
+    function ensurePlannerState(inventoryId) {
+      if (!plannerBlockState[inventoryId]) {
+        plannerBlockState[inventoryId] = {
+          target: null,
+          quantity: 1,
+          craftRecipes: [],
+          selectedRecipeId: null,
+          activeRecipe: null,
+          hasRecipe: false,
+          materials: [],
+          loading: false,
+          error: null,
+        }
+      }
+      return plannerBlockState[inventoryId]
+    }
+    function syncPlannerFromPin(inventoryId, pinItem) {
+      const st = ensurePlannerState(inventoryId)
+      if (pinItem?.plannerTarget?.id) {
+        st.target = {
+          id: String(pinItem.plannerTarget.id),
+          itemType: pinItem.plannerTarget.itemType ?? 0,
+        }
+        st.quantity = Math.max(1, Number(pinItem.plannerQuantity) || 1)
+        st.selectedRecipeId = pinItem.plannerRecipeId ? String(pinItem.plannerRecipeId) : null
+      }
+    }
+    function plannerTarget(inventoryId) {
+      return ensurePlannerState(inventoryId).target
+    }
+    function plannerQuantity(inventoryId) {
+      return ensurePlannerState(inventoryId).quantity
+    }
+    function plannerBlockError(inventoryId) {
+      return ensurePlannerState(inventoryId).error
+    }
+    function plannerActiveRecipe(inventoryId) {
+      return ensurePlannerState(inventoryId).activeRecipe
+    }
+    function plannerRecipeOptionTitle(recipe) {
+      if (!recipe) return 'Рецепт'
+      if (recipe.buildingName) {
+        return recipe.buildingTier ? `${recipe.buildingName} · T${recipe.buildingTier}` : recipe.buildingName
+      }
+      return recipe.name
+    }
+    function plannerRecipeOptionMeta(recipe) {
+      if (!recipe) return ''
+      const parts = [`выход ×${recipe.outputQuantity}`, `${recipe.ingredientCount} ингр.`]
+      if (!recipe.buildingName && recipe.name) parts.push(recipe.name)
+      return parts.join(' · ')
+    }
+    function plannerHasRecipe(inventoryId) {
+      return ensurePlannerState(inventoryId).hasRecipe
+    }
+    function plannerMaterials(inventoryId) {
+      return ensurePlannerState(inventoryId).materials
+    }
+    function plannerLoading(inventoryId) {
+      return ensurePlannerState(inventoryId).loading
+    }
+    function formatPlannerQty(value) {
+      const n = Number(value)
+      if (!Number.isFinite(n)) return '—'
+      return n.toLocaleString('ru-RU')
+    }
+    async function fetchCraftDetails(itemType, itemId) {
+      const id = String(itemId ?? '').trim()
+      if (!/^\d+$/.test(id)) {
+        throw new Error('Некорректный ID предмета')
+      }
+      const path = itemType === 1 ? `/cargo/${id}` : `/items/${id}`
+      const data = await fetchBitjita(path)
+      const entity = data.item ?? data.cargo
+      if (entity) {
+        seedCatalog(itemType === 1 ? { cargos: [entity] } : { items: [entity] })
+      }
+      return data
+    }
+    async function calculatePlannerMaterials(inventoryId, options = {}) {
+      const st = ensurePlannerState(inventoryId)
+      const target = st.target
+      if (!target?.id) return
+      st.loading = true
+      st.error = null
+      try {
+        let recipes
+        if (options.reuseRecipes && st.craftRecipes?.length) {
+          recipes = st.craftRecipes
+        } else {
+          const data = await fetchCraftDetails(target.itemType, target.id)
+          recipes = data.craftingRecipes ?? []
+          st.craftRecipes = recipes
+
+          const pin = pinned.value.find((p) => p.inventoryId === inventoryId)
+          const preferredId = st.selectedRecipeId ?? pin?.plannerRecipeId ?? null
+          st.selectedRecipeId = resolveRecipeId(recipes, target.id, preferredId)
+        }
+
+        const result = computeCraftMaterialsFromRecipes({
+          itemId: target.id,
+          itemType: target.itemType,
+          quantity: st.quantity,
+          recipes,
+          recipeId: st.selectedRecipeId,
+        })
+        st.activeRecipe = result.recipe
+        st.hasRecipe = result.hasRecipe
+        st.materials = result.materials
+        await prefetchItems([
+          { id: target.id, itemType: target.itemType },
+          ...result.materials,
+        ])
+      } catch (e) {
+        st.error = e.message
+        st.materials = []
+        st.activeRecipe = null
+        st.hasRecipe = false
+      } finally {
+        st.loading = false
+      }
+    }
+    function resetWizardPlannerDraft() {
+      clearTimeout(wizardPlannerSearchTimer)
+      wizardPlannerSearchGen = 0
+      wizard.plannerQuery = ''
+      wizard.plannerSearching = false
+      wizard.plannerResults = []
+      wizard.plannerTarget = null
+      wizard.plannerRecipeOptions = []
+      wizard.plannerSelectedRecipeId = null
+      wizard.plannerCraftRecipes = []
+      wizard.plannerQuantity = 1
+      wizard.plannerLoadingRecipes = false
+    }
+    function setWizardPlannerQuery(value) {
+      wizard.plannerQuery = value
+      clearTimeout(wizardPlannerSearchTimer)
+      const q = value.trim()
+      if (q.length < 2) {
+        wizard.plannerResults = []
+        wizard.plannerSearching = false
+        return
+      }
+      wizardPlannerSearchTimer = setTimeout(() => {
+        searchWizardPlannerItems()
+      }, SEARCH_DEBOUNCE_MS)
+    }
+    async function searchWizardPlannerItems() {
+      const q = wizard.plannerQuery.trim()
+      if (q.length < 2) {
+        wizard.plannerResults = []
+        wizard.plannerSearching = false
+        return
+      }
+      const gen = ++wizardPlannerSearchGen
+      wizard.plannerSearching = true
+      wizard.error = null
+      wizard.plannerResults = []
+      try {
+        const [itemsRes, cargoRes] = await Promise.all([
+          fetchBitjita('/items', { q }),
+          fetchBitjita('/cargo', { q }),
+        ])
+        if (gen !== wizardPlannerSearchGen) return
+        seedCatalog({ items: itemsRes.items, cargos: cargoRes.cargos })
+        const items = (itemsRes.items ?? []).map((item) => normalizePlannerSearchEntry(item, 0))
+        const cargos = (cargoRes.cargos ?? []).map((cargo) => normalizePlannerSearchEntry(cargo, 1))
+        wizard.plannerResults = dedupePlannerSearchResults([...items, ...cargos], plannerItemMeta)
+        if (!wizard.plannerResults.length) wizard.error = 'Ничего не найдено'
+      } catch (e) {
+        if (gen !== wizardPlannerSearchGen) return
+        wizard.error = e.message
+      } finally {
+        if (gen === wizardPlannerSearchGen) wizard.plannerSearching = false
+      }
+    }
+    async function loadWizardPlannerRecipes() {
+      if (!wizard.plannerTarget?.id) return
+      wizard.plannerLoadingRecipes = true
+      wizard.error = null
+      try {
+        const data = await fetchCraftDetails(wizard.plannerTarget.itemType, wizard.plannerTarget.id)
+        wizard.plannerCraftRecipes = data.craftingRecipes ?? []
+        wizard.plannerRecipeOptions = listRecipeOptions(wizard.plannerCraftRecipes, wizard.plannerTarget.id)
+        wizard.plannerSelectedRecipeId = resolveRecipeId(
+          wizard.plannerCraftRecipes,
+          wizard.plannerTarget.id,
+          wizard.plannerSelectedRecipeId,
+        )
+      } catch (e) {
+        wizard.error = e.message
+        wizard.plannerRecipeOptions = []
+        wizard.plannerSelectedRecipeId = null
+      } finally {
+        wizard.plannerLoadingRecipes = false
+      }
+    }
+    async function selectWizardPlannerTarget(entry) {
+      wizard.plannerTarget = { id: String(entry.id), itemType: entry.itemType }
+      wizard.plannerResults = []
+      wizard.plannerQuery = plannerItemMeta(entry).name
+      wizard.error = null
+      await loadWizardPlannerRecipes()
+    }
+    async function confirmWizardPlanner() {
+      if (!wizard.plannerTarget?.id || !wizardPlannerCanConfirm.value) return
+      const target = wizard.plannerTarget
+      const qty = Math.max(1, Math.floor(Number(wizard.plannerQuantity) || 1))
+      const recipeId = wizard.plannerSelectedRecipeId
+      const name = plannerItemMeta(target).name
+      const patch = {
+        plannerTarget: { id: target.id, itemType: target.itemType },
+        plannerRecipeId: recipeId,
+        plannerQuantity: qty,
+        inventoryName: `Планировщик · ${name}`,
+      }
+      if (wizard.editInventoryId) {
+        const inventoryId = wizard.editInventoryId
+        updatePinnedBlock(inventoryId, patch)
+        syncPlannerFromPin(inventoryId, pinned.value.find((p) => p.inventoryId === inventoryId))
+        await calculatePlannerMaterials(inventoryId)
+        closeAddWizard()
+        return
+      }
+      const blockId = `planner:${Date.now()}`
+      pinBlock({
+        blockType: 'planner',
+        sourceType: 'planner',
+        inventoryId: blockId,
+        ...patch,
+      })
+      syncPlannerFromPin(blockId, pinned.value.find((p) => p.inventoryId === blockId))
+      await calculatePlannerMaterials(blockId)
+      closeAddWizard()
+    }
+    function openEditPlannerWizard(inventoryId) {
+      const pin = pinned.value.find((p) => p.inventoryId === inventoryId)
+      if (!pin || !isPlannerBlock(pin)) return
+      resetWizard()
+      wizard.open = true
+      wizard.blockType = 'planner'
+      wizard.step = 'planner'
+      wizard.editInventoryId = inventoryId
+      wizard.plannerQuantity = Math.max(1, Number(pin.plannerQuantity) || 1)
+      if (pin.plannerTarget?.id) {
+        wizard.plannerTarget = {
+          id: String(pin.plannerTarget.id),
+          itemType: pin.plannerTarget.itemType ?? 0,
+        }
+        wizard.plannerQuery = plannerItemMeta(wizard.plannerTarget).name
+        wizard.plannerSelectedRecipeId = pin.plannerRecipeId ? String(pin.plannerRecipeId) : null
+        loadWizardPlannerRecipes()
+      }
+    }
+    async function initPlannerBlocks() {
+      const pins = pinned.value.filter(isPlannerBlock)
+      for (const pin of pins) {
+        syncPlannerFromPin(pin.inventoryId, pin)
+        const st = plannerBlockState[pin.inventoryId]
+        if (st?.target) {
+          await prefetchItems([st.target])
+          await calculatePlannerMaterials(pin.inventoryId)
+        }
+      }
+    }
     function marketTileSize(inventoryId) {
       const block = pinned.value.find((p) => p.inventoryId === inventoryId)
       return block?.marketTileSize === 'small' ? 'small' : 'large'
@@ -453,6 +1029,200 @@ export default {
     function setMarketTileSize(inventoryId, size) {
       if (size !== 'small' && size !== 'large') return
       updatePinnedBlock(inventoryId, { marketTileSize: size })
+    }
+    function ensureMarketSearchState(inventoryId) {
+      if (!marketSearchState[inventoryId]) {
+        marketSearchState[inventoryId] = {
+          query: '',
+          searching: false,
+          error: null,
+          results: [],
+          selected: null,
+          stats: null,
+          priceLoading: false,
+        }
+      }
+      return marketSearchState[inventoryId]
+    }
+    function marketSearchQuery(inventoryId) {
+      return ensureMarketSearchState(inventoryId).query
+    }
+    function setMarketSearchQuery(inventoryId, value) {
+      ensureMarketSearchState(inventoryId).query = value
+    }
+    function marketSearchSearching(inventoryId) {
+      return ensureMarketSearchState(inventoryId).searching
+    }
+    function marketSearchError(inventoryId) {
+      return ensureMarketSearchState(inventoryId).error
+    }
+    function marketSearchResults(inventoryId) {
+      return ensureMarketSearchState(inventoryId).results
+    }
+    function marketSearchSelected(inventoryId) {
+      return ensureMarketSearchState(inventoryId).selected
+    }
+    function marketSearchStats(inventoryId) {
+      return ensureMarketSearchState(inventoryId).stats
+    }
+    function marketSearchPriceLoading(inventoryId) {
+      return ensureMarketSearchState(inventoryId).priceLoading
+    }
+    function normalizeMarketSearchEntry(raw, itemType) {
+      return {
+        id: raw.id ?? raw.itemId ?? raw.item_id,
+        name: raw.name ?? raw.itemName ?? 'Предмет',
+        iconAssetName: raw.iconAssetName ?? raw.icon_asset_name ?? null,
+        tier: raw.tier ?? raw.itemTier ?? null,
+        rarityStr: raw.rarityStr ?? raw.rarity_str ?? null,
+        itemType,
+      }
+    }
+    function formatMarketStat(value) {
+      if (value == null || !Number.isFinite(Number(value))) return '—'
+      return Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 2 })
+    }
+    function marketPriceLines(stats) {
+      if (!stats || typeof stats !== 'object') return []
+      const lines = []
+      if (stats.vwap7d != null && Number.isFinite(Number(stats.vwap7d))) {
+        lines.push({ label: '7d AVG', value: formatMarketStat(stats.vwap7d) })
+      }
+      if (stats.vwap24h != null && Number.isFinite(Number(stats.vwap24h))) {
+        lines.push({ label: '24h AVG', value: formatMarketStat(stats.vwap24h) })
+      }
+      if (stats.lowestSellPrice != null && Number.isFinite(Number(stats.lowestSellPrice))) {
+        lines.push({ label: 'Мин. ask', value: formatMarketStat(stats.lowestSellPrice) })
+      }
+      if (stats.highestBuyPrice != null && Number.isFinite(Number(stats.highestBuyPrice))) {
+        lines.push({ label: 'Макс. bid', value: formatMarketStat(stats.highestBuyPrice) })
+      }
+      return lines
+    }
+    async function searchMarketItems(inventoryId) {
+      const st = ensureMarketSearchState(inventoryId)
+      const q = st.query.trim()
+      if (q.length < 2) return
+      st.searching = true
+      st.error = null
+      st.results = []
+      st.selected = null
+      st.stats = null
+      try {
+        const [itemsRes, cargoRes] = await Promise.all([
+          fetchBitjita('/items', { q }),
+          fetchBitjita('/cargo', { q }),
+        ])
+        const items = (itemsRes.items ?? []).map((item) => normalizeMarketSearchEntry(item, 0))
+        const cargos = (cargoRes.cargos ?? []).map((cargo) => normalizeMarketSearchEntry(cargo, 1))
+        st.results = [...items, ...cargos].slice(0, 10)
+        if (!st.results.length) st.error = 'Ничего не найдено'
+      } catch (e) {
+        st.error = e.message
+      } finally {
+        st.searching = false
+      }
+    }
+    async function selectMarketSearchItem(inventoryId, entry) {
+      const st = ensureMarketSearchState(inventoryId)
+      st.selected = entry
+      st.results = []
+      st.error = null
+      st.stats = null
+      st.priceLoading = true
+      seedCatalog(entry.itemType === 1 ? { cargos: [entry] } : { items: [entry] })
+      const id = Number(entry.id)
+      if (!Number.isFinite(id)) {
+        st.priceLoading = false
+        st.error = 'Некорректный ID предмета'
+        return
+      }
+      try {
+        const bulk = entry.itemType === 1
+          ? await postBitjita('/market/prices/bulk', { itemIds: [], cargoIds: [id] })
+          : await postBitjita('/market/prices/bulk', { itemIds: [id], cargoIds: [] })
+        const maps = bulk?.data ?? {}
+        st.stats = entry.itemType === 1 ? maps.cargo?.[String(id)] : maps.items?.[String(id)] ?? null
+      } catch (e) {
+        st.error = e.message
+      } finally {
+        st.priceLoading = false
+      }
+    }
+    function clearMarketSearchItem(inventoryId) {
+      const st = ensureMarketSearchState(inventoryId)
+      st.selected = null
+      st.stats = null
+      st.error = null
+      st.results = []
+    }
+    function isMapBlock(pinItem) {
+      return blockType(pinItem) === 'map'
+    }
+    function mapTileSize(inventoryId) {
+      const block = pinned.value.find((p) => p.inventoryId === inventoryId)
+      return block?.mapTileSize === 'small' ? 'small' : 'large'
+    }
+    function setMapTileSize(inventoryId, size) {
+      if (size !== 'small' && size !== 'large') return
+      updatePinnedBlock(inventoryId, { mapTileSize: size })
+    }
+    function ensureMapRoadsLayer(pathWithQueryHash) {
+      try {
+        const url = new URL(pathWithQueryHash, window.location.origin)
+        const layers = url.searchParams.getAll('turnLayerOn')
+        if (!layers.includes(MAP_ROADS_LAYER)) {
+          url.searchParams.append('turnLayerOn', MAP_ROADS_LAYER)
+        }
+        return url.pathname + url.search + url.hash
+      } catch {
+        return pathWithQueryHash
+      }
+    }
+    function mapBlockUrl(pinItem) {
+      const embedUrl = new URL(MAP_EMBED_PATH, window.location.origin)
+      const raw = pinItem?.mapUrl
+      if (raw) {
+        try {
+          const src = new URL(raw, window.location.origin)
+          src.searchParams.delete('bitdashMini')
+          embedUrl.search = src.search
+          embedUrl.hash = src.hash
+        } catch {
+          // keep default embed path
+        }
+      }
+      if (mapTileSize(pinItem?.inventoryId) === 'small') {
+        embedUrl.searchParams.set('bitdashMini', '1')
+      }
+      return ensureMapRoadsLayer(embedUrl.pathname + embedUrl.search + embedUrl.hash)
+    }
+    function setMapIframeRef(inventoryId, el) {
+      if (el) mapIframeRefs[inventoryId] = el
+      else delete mapIframeRefs[inventoryId]
+    }
+    function syncMapBlockUrl(inventoryId) {
+      const iframe = mapIframeRefs[inventoryId]
+      if (!iframe?.contentWindow) return
+      try {
+        const loc = iframe.contentWindow.location
+        if (!loc.pathname.startsWith('/map-embed')) return
+        const saved = new URL(`${loc.pathname}${loc.search}${loc.hash}`, window.location.origin)
+        saved.searchParams.delete('bitdashMini')
+        const next = `${saved.pathname}${saved.search}${saved.hash}`
+        const pin = pinned.value.find((p) => p.inventoryId === inventoryId)
+        if (pin && pin.mapUrl !== next) {
+          updatePinnedBlock(inventoryId, { mapUrl: next })
+        }
+      } catch {
+        // ignore cross-origin until embed is ready
+      }
+    }
+    function syncAllMapBlockUrls() {
+      pinned.value.filter(isMapBlock).forEach((p) => syncMapBlockUrl(p.inventoryId))
+    }
+    function onMapIframeLoad(inventoryId) {
+      syncMapBlockUrl(inventoryId)
     }
     function normalizePocket(pocket) {
       if (!pocket?.contents) return { ...pocket, contents: null }
@@ -548,40 +1318,6 @@ export default {
       return all
     }
 
-    async function loadForPlayer(playerEntityId) {
-      const playerPinned = pinned.value.filter((p) =>
-        sourceType(p) === 'player' && !isMarketBlock(p) && !isCharacterBlock(p) && p.playerEntityId === playerEntityId
-      )
-      if (!playerPinned.length) return
-      playerPinned.forEach((p) => {
-        const invState = ensureInventoryState(p.inventoryId)
-        invState[hasInventoryGrid(p.inventoryId) ? 'refreshing' : 'loading'] = true
-        invState.error = null
-      })
-      try {
-        const invs = await loadPlayerInventoriesCatalog(playerEntityId, playerPinned)
-        playerPinned.forEach((pinItem) => {
-          const inv = findInventoryById(invs, pinItem.inventoryId)
-          const invState = ensureInventoryState(pinItem.inventoryId)
-          invState.loading = false
-          invState.refreshing = false
-          invState.error = inv ? null : 'Инвентарь не найден'
-          if (inv) {
-            invState.inventory = inv
-            invState.pockets = inv.pockets ?? []
-            invState.updatedAt = new Date().toLocaleTimeString('ru-RU')
-          }
-        })
-        await prefetch(invs.map((inv) => ({ ...inv, pockets: (inv.pockets ?? []).slice(0, 200) })))
-      } catch (e) {
-        playerPinned.forEach((p) => {
-          const invState = ensureInventoryState(p.inventoryId)
-          invState.loading = false
-          invState.refreshing = false
-          invState.error = e.message
-        })
-      }
-    }
     function orderItemId(o) { return o.itemId ?? o.item_id }
     function orderItemType(o) {
       const t = o.itemType ?? o.item_type
@@ -672,6 +1408,40 @@ export default {
         })
       }
     }
+    async function loadForPlayer(playerEntityId) {
+      const playerPinned = pinned.value.filter((p) =>
+        sourceType(p) === 'player' && !isMarketBlock(p) && !isCharacterBlock(p) && !isMapBlock(p) && p.playerEntityId === playerEntityId
+      )
+      if (!playerPinned.length) return
+      playerPinned.forEach((p) => {
+        const invState = ensureInventoryState(p.inventoryId)
+        invState[hasInventoryGrid(p.inventoryId) ? 'refreshing' : 'loading'] = true
+        invState.error = null
+      })
+      try {
+        const invs = await loadPlayerInventoriesCatalog(playerEntityId, playerPinned)
+        playerPinned.forEach((pinItem) => {
+          const inv = findInventoryById(invs, pinItem.inventoryId)
+          const invState = ensureInventoryState(pinItem.inventoryId)
+          invState.loading = false
+          invState.refreshing = false
+          invState.error = inv ? null : 'Инвентарь не найден'
+          if (inv) {
+            invState.inventory = inv
+            invState.pockets = inv.pockets ?? []
+            invState.updatedAt = new Date().toLocaleTimeString('ru-RU')
+          }
+        })
+        await prefetch(invs.map((inv) => ({ ...inv, pockets: (inv.pockets ?? []).slice(0, 200) })))
+      } catch (e) {
+        playerPinned.forEach((p) => {
+          const invState = ensureInventoryState(p.inventoryId)
+          invState.loading = false
+          invState.refreshing = false
+          invState.error = e.message
+        })
+      }
+    }
     async function loadForClaim(claimEntityId) {
       const claimPinned = pinned.value.filter((p) => sourceType(p) === 'claim' && p.claimEntityId === claimEntityId)
       if (!claimPinned.length) return
@@ -708,7 +1478,7 @@ export default {
       }
     }
     async function loadAll() {
-      const playerIds = [...new Set(pinned.value.filter((p) => sourceType(p) === 'player' && !isMarketBlock(p) && !isCharacterBlock(p)).map((p) => p.playerEntityId))]
+      const playerIds = [...new Set(pinned.value.filter((p) => sourceType(p) === 'player' && !isMarketBlock(p) && !isCharacterBlock(p) && !isMapBlock(p)).map((p) => p.playerEntityId))]
       const marketPlayerIds = [...new Set(pinned.value.filter((p) => isMarketBlock(p)).map((p) => p.playerEntityId))]
       const characterPlayerIds = [...new Set(pinned.value.filter((p) => isCharacterBlock(p)).map((p) => p.playerEntityId))]
       const claimIds = [...new Set(pinned.value.filter((p) => sourceType(p) === 'claim').map((p) => p.claimEntityId))]
@@ -805,7 +1575,9 @@ export default {
     }
     function dashboardCardSpan(inventoryId) {
       const pinItem = pinned.value.find((p) => p.inventoryId === inventoryId)
+      if (isMapBlock(pinItem)) return mapTileSize(inventoryId) === 'small' ? 1 : 2
       if (isCharacterBlock(pinItem)) return 1
+      if (isPlannerBlock(pinItem)) return plannerMaterials(inventoryId).length > 6 ? 2 : 1
       if (isMarketBlock(pinItem)) return marketTileSize(inventoryId) === 'small' ? 1 : 2
       const itemCount = displayItemSlots(inventoryId).length
       const cargoCount = displayCargoSlots(inventoryId).length
@@ -889,6 +1661,8 @@ export default {
       return itemCapacity(inventoryId) > 0 || cargoCapacity(inventoryId) > 0 || inventorySlots(inventoryId).length > 0
     }
     function blockIsEmpty(item) {
+      if (isMapBlock(item)) return false
+      if (isPlannerBlock(item)) return !item.plannerTarget?.id
       if (isMarketBlock(item)) return marketRows(item.inventoryId).length === 0
       if (isCharacterBlock(item)) return !state[item.inventoryId]?.characterStats
       return !hasInventoryGrid(item.inventoryId)
@@ -951,6 +1725,10 @@ export default {
       return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
     }
     function itemMeta(contents) { return resolveItem(contents) }
+    function plannerItemMeta(itemRef) {
+      if (!itemRef?.id) return { name: '?', type: 0 }
+      return resolveItem({ itemId: itemRef.id, itemType: itemRef.itemType })
+    }
     function quantityDisplay(quantity) { return Number(quantity ?? 0).toLocaleString('ru-RU') }
     function blockOwnerLabel(item) {
       if (isMarketBlock(item)) return item.playerName ? `Игрок: ${item.playerName}` : 'Рынок игрока'
@@ -985,6 +1763,10 @@ export default {
     }
 
     function resetWizard() {
+      clearTimeout(wizardSearchTimer)
+      clearTimeout(wizardPlannerSearchTimer)
+      wizardSearchGen = 0
+      wizardPlannerSearchGen = 0
       Object.assign(wizard, {
         step: 'type',
         blockType: 'inventory',
@@ -996,6 +1778,16 @@ export default {
         selectedEntity: null,
         inventories: [],
         loadingInventories: false,
+        editInventoryId: null,
+        plannerQuery: '',
+        plannerSearching: false,
+        plannerResults: [],
+        plannerTarget: null,
+        plannerRecipeOptions: [],
+        plannerSelectedRecipeId: null,
+        plannerCraftRecipes: [],
+        plannerQuantity: 1,
+        plannerLoadingRecipes: false,
       })
     }
     function openAddWizard() { resetWizard(); wizard.open = true }
@@ -1007,6 +1799,15 @@ export default {
       wizard.error = null
       wizard.results = []
       wizard.inventories = []
+      if (type === 'map') {
+        addWizardMap()
+        return
+      }
+      if (type === 'planner') {
+        wizard.step = 'planner'
+        resetWizardPlannerDraft()
+        return
+      }
       wizard.step = (type === 'market' || type === 'character') ? 'search' : 'source'
     }
     function chooseSourceType(type) {
@@ -1018,16 +1819,31 @@ export default {
       wizard.step = 'search'
     }
     function wizardBack() {
+      if (wizard.editInventoryId && wizard.step === 'planner') {
+        closeAddWizard()
+        return
+      }
       if (wizard.blockType === 'market' || wizard.blockType === 'character') {
         wizard.step = wizard.step === 'search' ? 'type' : 'search'
         return
       }
-      const index = wizardSteps.indexOf(wizard.step)
-      if (index > 0) wizard.step = wizardSteps[index - 1]
+      if (wizard.blockType === 'planner' && wizard.step === 'planner') {
+        wizard.step = 'type'
+        resetWizardPlannerDraft()
+        return
+      }
+      const index = wizardSteps.value.indexOf(wizard.step)
+      if (index > 0) wizard.step = wizardSteps.value[index - 1]
     }
     async function searchWizard() {
       const q = wizard.query.trim()
-      if (!q) return
+      if (!q) {
+        wizard.results = []
+        wizard.error = null
+        wizard.searching = false
+        return
+      }
+      const gen = ++wizardSearchGen
       wizard.searching = true
       wizard.error = null
       wizard.results = []
@@ -1035,14 +1851,29 @@ export default {
       try {
         const searchPlayers = wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.sourceType === 'player'
         const res = await fetchBitjita(searchPlayers ? '/players' : '/claims', { q })
+        if (gen !== wizardSearchGen) return
         wizard.results = searchPlayers ? (res.players ?? []) : (res.claims ?? [])
         if (wizard.results.length === 0) wizard.error = searchPlayers ? 'Игрок не найден' : 'Клейм не найден'
       } catch (e) {
+        if (gen !== wizardSearchGen) return
         wizard.error = e.message
       } finally {
-        wizard.searching = false
+        if (gen === wizardSearchGen) wizard.searching = false
       }
     }
+
+    watch(() => wizard.query, () => {
+      if (!wizard.open || wizard.step !== 'search') return
+      clearTimeout(wizardSearchTimer)
+      const q = wizard.query.trim()
+      if (!q) {
+        wizard.results = []
+        wizard.error = null
+        wizard.searching = false
+        return
+      }
+      wizardSearchTimer = setTimeout(() => searchWizard(), SEARCH_DEBOUNCE_MS)
+    })
     async function selectWizardEntity(entity) {
       wizard.selectedEntity = entity
       wizard.error = null
@@ -1137,6 +1968,18 @@ export default {
       closeAddWizard()
       loadAll()
     }
+    function addWizardMap() {
+      const blockId = `map:${Date.now()}`
+      pinBlock({
+        blockType: 'map',
+        sourceType: 'map',
+        inventoryId: blockId,
+        inventoryName: 'Карта',
+        mapUrl: ensureMapRoadsLayer(MAP_EMBED_PATH),
+        mapTileSize: 'large',
+      })
+      closeAddWizard()
+    }
     function isCharacterBlock(pinItem) {
       return blockType(pinItem) === 'character'
     }
@@ -1150,13 +1993,19 @@ export default {
         st.error = null
       })
       try {
-        const data = await fetchBitjita(`/players/${playerEntityId}/stats`)
-        const stats = data?.stats ?? null
+        const [statsData, buffsData] = await Promise.all([
+          fetchBitjita(`/players/${playerEntityId}/stats`),
+          fetchBitjita(`/players/${playerEntityId}/buffs`).catch(() => null),
+        ])
+        const stats = statsData?.stats ?? null
+        if (!stats?.values) throw new Error('нет данных статов')
+        const buffs = buffsData?.buffs ?? null
         charPinned.forEach((p) => {
           const st = ensureInventoryState(p.inventoryId)
           st.loading = false
           st.refreshing = false
           st.characterStats = stats
+          if (buffs) st.characterBuffs = buffs
           st.updatedAt = new Date().toLocaleTimeString('ru-RU')
         })
       } catch (e) {
@@ -1174,6 +2023,16 @@ export default {
       const st = state[inventoryId]
       if (!st?.characterStats?.values) return null
       return characterVitalsFromStats(st.characterStats, liveSnapshot(pinItem.playerEntityId))
+    }
+    function characterBuffsLoaded(inventoryId) {
+      return Array.isArray(state[inventoryId]?.characterBuffs)
+    }
+    function characterActiveBuffs(inventoryId) {
+      return activeBuffsFromPayload(state[inventoryId]?.characterBuffs)
+    }
+    function characterHasFoodBuff(inventoryId) {
+      if (!characterBuffsLoaded(inventoryId)) return true
+      return hasActiveFoodBuff(state[inventoryId].characterBuffs)
     }
     function syncCharacterLiveSubscriptions() {
       const playerIds = pinned.value.filter((p) => isCharacterBlock(p)).map((p) => p.playerEntityId)
@@ -1269,9 +2128,14 @@ export default {
       if (gridRef.value) resizeObserver.observe(gridRef.value)
       loadAll()
       timer = setInterval(loadAll, 30000)
+      mapUrlSyncTimer = setInterval(syncAllMapBlockUrls, 1000)
+      initPlannerBlocks()
     })
     onUnmounted(() => {
       clearInterval(timer)
+      clearInterval(mapUrlSyncTimer)
+      clearTimeout(wizardSearchTimer)
+      clearTimeout(wizardPlannerSearchTimer)
       resizeObserver?.disconnect()
       syncPlayerSubscriptions([])
       resetStaminaAlerts()
@@ -1281,9 +2145,19 @@ export default {
       pinned, isPinned, unpin, state, dragState, wizard, wizardStepIndex, wizardSubtitle,
       gridRef, dashboardCols, dashboardUpdatedLabel, layoutCells,
       displayInventorySlots, dashboardCardClass, dashboardCardStyle, dashboardCellClass, dashboardCellStyle,
-      inventoryGridStyle, hasInventoryGrid, hasContents, itemMeta, quantityDisplay, blockOwnerLabel, isMarketBlock, isCharacterBlock,
-      marketRows, marketTileSize, setMarketTileSize, marketDiffClass, marketDiffLabel, blockIsEmpty, marketDeviationCount, marketRowDeviationClass,
-      characterBars, formatVitalsValue, vitalsBarPercent,
+      inventoryGridStyle, hasInventoryGrid, hasContents, itemMeta, quantityDisplay, blockOwnerLabel,
+      isCharacterBlock, isMarketBlock, isPlannerBlock, isMapBlock, mapBlockUrl,
+      mapTileSize, setMapTileSize, setMapIframeRef, onMapIframeLoad, marketRows, marketTileSize, setMarketTileSize,
+      marketDiffClass, marketDiffLabel, marketDeviationCount, marketRowDeviationClass,
+      marketSearchQuery, setMarketSearchQuery, searchMarketItems, selectMarketSearchItem, clearMarketSearchItem,
+      marketSearchSearching, marketSearchError, marketSearchResults, marketSearchSelected, marketSearchStats,
+      marketSearchPriceLoading, marketPriceLines, blockIsEmpty,
+      plannerTarget, plannerQuantity, plannerActiveRecipe, plannerBlockError,
+      plannerHasRecipe, plannerMaterials, plannerLoading, formatPlannerQty, plannerItemMeta,
+      openEditPlannerWizard, wizardPlannerCanConfirm, confirmWizardPlanner,
+      setWizardPlannerQuery, selectWizardPlannerTarget, plannerRecipeOptionTitle, plannerRecipeOptionMeta,
+      characterBars, characterBuffsLoaded, characterActiveBuffs, characterHasFoodBuff,
+      formatVitalsValue, vitalsBarPercent,
       loadAll, startDrag, dragOverCell, dropOnCell, endDrag,
       openAddWizard, closeAddWizard, chooseBlockType, chooseSourceType, searchWizard,
       selectWizardEntity, addWizardInventory, wizardBack, wizardResultTitle, wizardResultMeta,
@@ -1383,6 +2257,17 @@ export default {
 .market-dev-badge--below { background: rgba(117, 224, 167, 0.16); color: var(--success); }
 .unpin-btn { border: none; background: none; font-size: 14px; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 5px; }
 .unpin-btn:hover { color: var(--danger); background: rgba(255, 138, 154, 0.12); }
+.edit-block-btn {
+  border: none;
+  background: none;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 5px;
+  line-height: 1;
+}
+.edit-block-btn:hover { color: var(--accent); background: rgba(138, 164, 255, 0.14); }
 .inventory-board { flex: 1; min-height: 0; padding: 8px; background: #252437; border: 2px solid #35344a; border-radius: 10px; width: fit-content; max-width: 100%; overflow: hidden; }
 .inventory-grid { display: grid; grid-template-columns: repeat(var(--inventory-cols), var(--dash-slot)); gap: var(--dash-gap); justify-content: start; width: max-content; max-width: 100%; }
 .inventory-slot { position: relative; height: var(--dash-slot-height); display: flex; align-items: center; justify-content: center; border-radius: 9px; background: linear-gradient(145deg, #4a4960, #2c2b3e); box-shadow: inset 0 0 0 2px #6a687e, inset 0 0 0 4px #2f2e43, 0 1px 2px rgba(0, 0, 0, 0.35); }
@@ -1395,6 +2280,146 @@ export default {
 .inventory-slot :deep(.item-card--mini.item-card--rarity .item-card__icon) { border-width: 3px; }
 .inventory-slot :deep(.item-card--mini .item-card__fallback) { font-size: 9px; }
 .inventory-slot :deep(.item-card--mini .item-card__image) { width: 84%; height: 84%; }
+.market-block-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.market-orders {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.market-item-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(37, 36, 55, 0.45);
+}
+.market-item-search-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.market-item-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.market-item-search-input:focus { border-color: var(--accent); }
+.market-item-search-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.market-item-search-btn:disabled { opacity: 0.5; cursor: default; }
+.market-item-search-error {
+  font-size: 11px;
+  color: var(--danger);
+}
+.market-item-search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow: auto;
+}
+.market-item-search-result {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.market-item-search-result:hover { border-color: var(--accent); background: var(--surface-hover); }
+.market-item-search-result :deep(.item-card__body) { display: none; }
+.market-item-search-result :deep(.item-card--mini .item-card__icon) {
+  width: 22px;
+  height: 28px;
+  flex-basis: 22px;
+  border-radius: 5px;
+}
+.market-item-search-result-name {
+  font-size: 12px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.market-item-price-loading,
+.market-item-price-empty {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.market-item-price-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+}
+.market-item-price-card :deep(.item-card__body) { display: none; }
+.market-item-price-card :deep(.item-card--mini .item-card__icon) {
+  width: 28px;
+  height: 34px;
+  flex-basis: 28px;
+  border-radius: 6px;
+}
+.market-item-price-lines {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px;
+}
+.market-item-price-line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.market-item-price-value {
+  color: var(--text);
+  font-weight: 600;
+}
+.market-item-price-clear {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.market-item-price-clear:hover { color: var(--danger); background: rgba(255, 138, 154, 0.12); }
 .market-list { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; overflow-y: auto; overflow-x: hidden; }
 .market-list--small { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .market-row { display: flex; align-items: center; gap: 6px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-raised); padding: 5px 7px; }
@@ -1437,14 +2462,286 @@ export default {
 .market-lot-block { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 52px; }
 .market-lot-location { font-size: 9px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px; line-height: 1.2; }
 .market-lot-total { font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); text-align: right; line-height: 1.2; }
-.market-row-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.market-meta { font-size: 12px; color: var(--text-soft); }
-.market-amount { font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
-.market-amount--player { color: var(--text); font-weight: 700; }
 .market-amount--ref { color: var(--muted); }
 .market-diff--above { color: var(--danger); }
 .market-diff--below { color: var(--success); }
 .market-diff--neutral { color: var(--muted); }
+.planner-block {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.planner-search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.planner-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.planner-search-input:focus { border-color: var(--accent); }
+.planner-searching {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 12px;
+}
+.planner-error { font-size: 11px; color: var(--danger); }
+.planner-search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow: auto;
+}
+.planner-search-result {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.planner-search-result:hover { border-color: var(--accent); background: var(--surface-hover); }
+.planner-search-result :deep(.item-card__body) { display: none; }
+.planner-search-result :deep(.item-card--mini .item-card__icon) {
+  width: 22px;
+  height: 28px;
+  flex-basis: 22px;
+  border-radius: 5px;
+}
+.planner-search-result-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-target {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(138, 164, 255, 0.08);
+}
+.planner-target--readonly {
+  background: rgba(138, 164, 255, 0.06);
+}
+.planner-target-qty {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wizard-planner-results {
+  max-height: 160px;
+}
+.wizard-planner-target {
+  margin-top: 4px;
+}
+.planner-search-result--active {
+  border-color: var(--accent);
+  background: rgba(138, 164, 255, 0.12);
+}
+.modal-actions .add-block-btn { margin-right: auto; }
+.planner-target-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.planner-target-head :deep(.item-card__body) { display: none; }
+.planner-target-head :deep(.item-card--mini .item-card__icon) {
+  width: 28px;
+  height: 34px;
+  flex-basis: 28px;
+  border-radius: 6px;
+}
+.planner-target-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.planner-target-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-qty-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.planner-qty-input {
+  width: 72px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+}
+.planner-target-clear {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.planner-target-clear:hover { color: var(--danger); background: rgba(255, 138, 154, 0.12); }
+.planner-recipe-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.planner-recipes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.planner-recipes-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.planner-recipes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.planner-recipe-option {
+  flex: 1 1 148px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.planner-recipe-option:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.planner-recipe-option--active {
+  border-color: var(--accent);
+  background: rgba(138, 164, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(138, 164, 255, 0.28);
+}
+.planner-recipe-option-title {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-recipe-option-meta {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-recipe-label { color: var(--muted); }
+.planner-recipe-select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 11px;
+}
+.planner-recipe-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.planner-loading,
+.planner-hint {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.planner-materials {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+  min-height: 0;
+}
+.planner-material-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-raised);
+}
+.planner-material-row :deep(.item-card__body) { display: none; }
+.planner-material-row :deep(.item-card--mini .item-card__icon) {
+  width: 26px;
+  height: 32px;
+  flex-basis: 26px;
+  border-radius: 6px;
+}
+.planner-material-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-material-qty {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
 .empty-inv, .placeholder { font-size: 13px; color: var(--muted); font-style: italic; }
 .error-msg, .wizard-error { font-size: 13px; color: var(--danger); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(10, 9, 18, 0.72); backdrop-filter: blur(4px); }
@@ -1463,7 +2760,14 @@ export default {
 .choice-card.active { border-color: var(--accent); background: rgba(138, 164, 255, 0.14); }
 .choice-title, .result-title { display: block; font-size: 14px; font-weight: 700; color: var(--text); }
 .choice-text, .result-meta { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.4; }
-.wizard-search { display: flex; gap: 8px; }
+.wizard-search { display: flex; align-items: center; gap: 8px; }
+.wizard-search .wizard-input { flex: 1; min-width: 0; }
+.wizard-searching-hint {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 12px;
+}
 .wizard-input { flex: 1; min-width: 0; padding: 8px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: var(--text); outline: none; }
 .wizard-results, .wizard-inventory-list { display: flex; flex-direction: column; gap: 8px; }
 .wizard-inventory-group { display: flex; flex-direction: column; gap: 8px; }
@@ -1517,15 +2821,125 @@ export default {
 }
 
 /* ──────────────────────────────────────────
+   Map block
+   ────────────────────────────────────────── */
+.map-block {
+  flex: 1;
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0c0b14;
+}
+.map-iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  border: none;
+  display: block;
+}
+.map-block--small,
+.map-iframe--small {
+  min-height: 0;
+}
+.map-iframe--small {
+  min-height: 280px;
+}
+
+/* ──────────────────────────────────────────
    Character stats block
    ────────────────────────────────────────── */
 .char-stats {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 14px;
   padding: 10px 4px 4px;
   justify-content: center;
+  border-radius: 10px;
+  transition: background 0.2s, border-color 0.2s;
+}
+.char-stats--no-food {
+  padding: 10px 8px 8px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.08);
+}
+.char-stats--no-food .char-bar-group--satiation .char-bar-track {
+  border-color: rgba(248, 113, 113, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.2);
+}
+.char-food-warn {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fca5a5;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.15);
+}
+.char-buffs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.char-buffs-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.char-buffs-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.char-buff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.char-buff-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.char-buff-item--food {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.08);
+}
+.char-buff-item--bad {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.08);
+}
+.char-buff-name {
+  color: var(--text-soft);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.char-buff-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-weight: 600;
 }
 .char-bar-group {
   display: flex;

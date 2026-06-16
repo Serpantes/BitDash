@@ -1,6 +1,10 @@
 import { reactive } from 'vue'
 
-const WS_URL = 'wss://live.bitjita.com'
+function liveWebSocketUrl() {
+  if (typeof window === 'undefined') return 'wss://live.bitjita.com'
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/api/live-ws`
+}
 
 const healthByPlayer = reactive({})
 const staminaByPlayer = reactive({})
@@ -12,6 +16,7 @@ const subscribedPlayers = new Set()
 let ws = null
 let reconnectTimer = null
 let reconnectAttempts = 0
+let visibilityListenerBound = false
 
 function playerChannels(playerId) {
   const id = String(playerId)
@@ -102,7 +107,7 @@ function handleMessage(raw) {
 function scheduleReconnect() {
   if (reconnectTimer) return
   if (subscribedPlayers.size === 0) return
-  const delay = Math.min(30000, 3000 * (reconnectAttempts + 1))
+  const delay = Math.min(30000, 1000 * (reconnectAttempts + 1))
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
     reconnectAttempts += 1
@@ -110,11 +115,24 @@ function scheduleReconnect() {
   }, delay)
 }
 
+function bindVisibilityReconnect() {
+  if (visibilityListenerBound || typeof document === 'undefined') return
+  visibilityListenerBound = true
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || subscribedPlayers.size === 0) return
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      reconnectAttempts = 0
+      connect()
+    }
+  })
+}
+
 function connect() {
   if (typeof WebSocket === 'undefined') return
   if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return
 
-  ws = new WebSocket(WS_URL)
+  bindVisibilityReconnect()
+  ws = new WebSocket(liveWebSocketUrl())
 
   ws.onopen = () => {
     reconnectAttempts = 0
@@ -124,6 +142,7 @@ function connect() {
   }
 
   ws.onmessage = (event) => {
+    reconnectAttempts = 0
     try {
       handleMessage(event.data)
     } catch {
@@ -137,7 +156,9 @@ function connect() {
   }
 
   ws.onerror = () => {
-    ws?.close()
+    if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
+      ws.close()
+    }
   }
 }
 

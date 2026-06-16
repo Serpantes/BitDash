@@ -3,10 +3,13 @@ package delivery
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"bitdash/backend/internal/cache"
+	"bitdash/backend/internal/repository"
 )
 
 func TestBitjitaIconHandlerUsesGeneratedIconsPath(t *testing.T) {
@@ -20,7 +23,15 @@ func TestBitjitaIconHandlerUsesGeneratedIconsPath(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler := NewBitjitaIconHandler(upstream.URL, cache.New(time.Minute))
+	root := filepath.Join(os.TempDir(), "bitdash-icon-cache-test")
+	defer os.RemoveAll(root)
+
+	bitjitaCache, err := repository.NewBitjitaCache(upstream.URL, root, cache.New(time.Minute))
+	if err != nil {
+		t.Fatalf("NewBitjitaCache: %v", err)
+	}
+
+	handler := NewBitjitaIconHandler(bitjitaCache)
 	req := httptest.NewRequest(http.MethodGet, "/api/bitjita-icon?iconAssetName=Items/FishAndChips", nil)
 	res := httptest.NewRecorder()
 
@@ -35,18 +46,12 @@ func TestBitjitaIconHandlerUsesGeneratedIconsPath(t *testing.T) {
 	if got := res.Body.String(); got != "webp" {
 		t.Fatalf("expected icon body, got %q", got)
 	}
-}
 
-func TestIconAssetPathCandidatesKeepsGeneratedIconsPathFirst(t *testing.T) {
-	got := iconAssetPathCandidates("GeneratedIcons/Items/KeyMold")
-	want := []string{"/GeneratedIcons/Items/KeyMold.webp"}
-
-	if len(got) != len(want) {
-		t.Fatalf("expected %d candidates, got %d: %#v", len(want), len(got), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("candidate %d: expected %q, got %q", i, want[i], got[i])
-		}
+	// Second request should be served from disk cache (upstream closed would still work).
+	upstream.Close()
+	res2 := httptest.NewRecorder()
+	handler(res2, req)
+	if res2.Code != http.StatusOK {
+		t.Fatalf("expected cached status 200, got %d", res2.Code)
 	}
 }

@@ -1,29 +1,21 @@
 package delivery
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
-	"bitdash/backend/internal/cache"
+	"bitdash/backend/internal/repository"
 )
 
 type bitjitaProxyHandler struct {
-	baseURL string
-	client  *http.Client
-	cache   *cache.Cache
+	cache *repository.BitjitaCache
 }
 
-// NewBitjitaProxyHandler returns a handler that proxies /api/bitjita/* → baseURL/api/*
-// with in-memory caching for GET and selected POST requests.
-func NewBitjitaProxyHandler(baseURL string, c *cache.Cache) func(http.ResponseWriter, *http.Request) {
-	h := &bitjitaProxyHandler{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  &http.Client{Timeout: 60 * time.Second},
-		cache:   c,
-	}
+// NewBitjitaProxyHandler returns a handler that proxies /api/bitjita/* → BitJita API
+// with disk cache for static data and memory cache for live endpoints.
+func NewBitjitaProxyHandler(c *repository.BitjitaCache) func(http.ResponseWriter, *http.Request) {
+	h := &bitjitaProxyHandler{cache: c}
 	return h.handle
 }
 
@@ -40,72 +32,42 @@ func (h *bitjitaProxyHandler) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip /api/bitjita prefix, keep the rest (e.g. /status, /regions/status)
 	path := strings.TrimPrefix(r.URL.Path, "/api/bitjita")
 	if path == "" {
 		path = "/"
 	}
+	query := r.URL.RawQuery
 
-	targetURL := h.baseURL + "/api" + path
-	if r.URL.RawQuery != "" {
-		targetURL += "?" + r.URL.RawQuery
-	}
-
-	var reqBody io.Reader
-	cacheKey := targetURL
-	if r.Method == http.MethodPost {
-		body, err := io.ReadAll(r.Body)
+	if r.Method == http.MethodGet {
+		body, status, cacheStatus, err := h.cache.GetAPI(path, query)
 		if err != nil {
-			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			http.Error(w, "upstream unavailable", http.StatusBadGateway)
 			return
 		}
-		defer r.Body.Close()
-		reqBody = bytes.NewReader(body)
-		if path == "/market/prices/bulk" {
-			cacheKey = targetURL + "\n" + string(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", cacheStatus)
+		if repository.BitjitaCachePolicy(path, query) == "permanent" {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 		}
-	}
-
-	if r.Method == http.MethodGet || (r.Method == http.MethodPost && path == "/market/prices/bulk") {
-		if data, ok := h.cache.Get(cacheKey); ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			w.Write(data)
-			return
-		}
-	}
-
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, reqBody)
-	if err != nil {
-		http.Error(w, "bad upstream request", http.StatusInternalServerError)
+		w.WriteHeader(status)
+		w.Write(body) //nolint:errcheck
 		return
 	}
-	req.Header.Set("x-app-identifier", "BitDash")
-	if ct := r.Header.Get("Content-Type"); ct != "" {
-		req.Header.Set("Content-Type", ct)
-	} else if r.Method == http.MethodPost {
-		req.Header.Set("Content-Type", "application/json")
-	}
 
-	resp, err := h.client.Do(req)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	respBody, status, err := h.cache.PostAPI(path, query, body)
 	if err != nil {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, "failed to read upstream response", http.StatusBadGateway)
-		return
-	}
-
-	if (r.Method == http.MethodGet || (r.Method == http.MethodPost && path == "/market/prices/bulk")) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		h.cache.Set(cacheKey, respBody)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
-	w.WriteHeader(resp.StatusCode)
-	w.Write(respBody)
+	w.WriteHeader(status)
+	w.Write(respBody) //nolint:errcheck
 }

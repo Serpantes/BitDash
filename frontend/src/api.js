@@ -1,3 +1,6 @@
+/**
+ * Lightweight reachability check for a backend path.
+ */
 export async function ping(path, timeout = 5000) {
   const url = path.startsWith('http') ? path : window.location.origin + path
   const start = Date.now()
@@ -24,6 +27,11 @@ export async function fetchBitjita(path, params = {}) {
   const res = await fetch(url.toString())
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
+}
+
+/** Ping BitJita API via backend proxy (default: /status). */
+export async function pingBitjita(path = '/status', timeout = 10000) {
+  return ping(`/api/bitjita${path}`, timeout)
 }
 
 /**

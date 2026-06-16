@@ -13,11 +13,11 @@
           {{ tab.label }}
         </button>
       </nav>
+      <BitjitaStatus />
     </header>
     <main>
-      <Dashboard v-if="activeTab === 'server'" />
-      <PinnedDashboard v-else-if="activeTab === 'dashboard'" />
-      <MarketTab v-else-if="activeTab === 'market'" />
+      <PinnedDashboard v-if="activeTab === 'dashboard'" />
+      <Dashboard v-else-if="activeTab === 'server'" />
     </main>
   </div>
 </template>
@@ -26,16 +26,15 @@
 import { ref } from 'vue'
 import Dashboard from './components/Dashboard.vue'
 import PinnedDashboard from './components/PinnedDashboard.vue'
-import MarketTab from './components/MarketTab.vue'
+import BitjitaStatus from './components/BitjitaStatus.vue'
 
 export default {
-  components: { Dashboard, PinnedDashboard, MarketTab },
+  components: { Dashboard, PinnedDashboard, BitjitaStatus },
   setup() {
-    const activeTab = ref('server')
+    const activeTab = ref('dashboard')
     const tabs = [
-      { id: 'server', label: 'Серверы' },
       { id: 'dashboard', label: 'Дашборд' },
-      { id: 'market', label: 'Рынок' },
+      { id: 'server', label: 'Серверы' },
     ]
     return { activeTab, tabs }
   },
@@ -76,6 +75,7 @@ body {
   align-items: center;
   gap: 24px;
   margin-bottom: 18px;
+  flex-wrap: wrap;
 }
 .logo { font-size: 22px; font-weight: 800; color: var(--text); letter-spacing: -0.5px; }
 .tabs { display: flex; gap: 4px; }

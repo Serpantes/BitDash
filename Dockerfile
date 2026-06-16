@@ -31,7 +31,8 @@ USER appuser
 
 ENV PORT=8090 \
   FRONTEND_DIST=/app/frontend/dist \
-  ITEM_NAME_FILE=/app/data/item-names.json \
+  ITEM_NAME_FILE=/var/lib/bitdash/item-names.json \
+  BITJITA_CACHE_DIR=/var/lib/bitdash/bitjita-cache \
   PLAYER_RESPONSE_FILE=/var/lib/bitdash/players.json \
   BITJITA_BASE_URL=https://bitjita.com
 

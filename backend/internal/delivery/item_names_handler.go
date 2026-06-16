@@ -3,24 +3,20 @@ package delivery
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"time"
 
 	"bitdash/backend/internal/repository"
 )
 
 type itemNamesHandler struct {
-	store      *repository.ItemNameStore
-	baseURL    string
-	httpClient *http.Client
+	store   *repository.ItemNameStore
+	bitjita *repository.BitjitaCache
 }
 
-func NewItemNamesHandler(baseURL string, store *repository.ItemNameStore) http.HandlerFunc {
+func NewItemNamesHandler(bitjita *repository.BitjitaCache, store *repository.ItemNameStore) http.HandlerFunc {
 	h := &itemNamesHandler{
-		store:      store,
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		store:   store,
+		bitjita: bitjita,
 	}
 	return h.serveHTTP
 }
@@ -46,7 +42,7 @@ func (h *itemNamesHandler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	var missing []itemNameRequest
 	for _, item := range items {
 		key := repository.ItemKey(item.Type, item.ID)
-		if meta, ok := h.store.Get(key); ok && meta.Name != "" && meta.IconAssetName != "" && meta.RarityStr != "" {
+		if meta, ok := h.store.Get(key); ok && meta.Name != "" && meta.IconAssetName != "" {
 			result[key] = meta
 		} else {
 			missing = append(missing, item)
@@ -69,30 +65,15 @@ func (h *itemNamesHandler) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *itemNamesHandler) fetchMeta(item itemNameRequest) repository.ItemMeta {
-	url := fmt.Sprintf("%s/api/items/%d", h.baseURL, item.ID)
+	path := fmt.Sprintf("/items/%d", item.ID)
 	topKey := "item"
 	if item.Type == 1 {
-		url = fmt.Sprintf("%s/api/cargo/%d", h.baseURL, item.ID)
+		path = fmt.Sprintf("/cargo/%d", item.ID)
 		topKey = "cargo"
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return repository.ItemMeta{Name: fmt.Sprintf("#%d", item.ID)}
-	}
-	req.Header.Set("x-app-identifier", "BitDash")
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return repository.ItemMeta{Name: fmt.Sprintf("#%d", item.ID)}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return repository.ItemMeta{Name: fmt.Sprintf("#%d", item.ID)}
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	body, status, _, err := h.bitjita.GetAPI(path, "")
+	if err != nil || status != http.StatusOK {
 		return repository.ItemMeta{Name: fmt.Sprintf("#%d", item.ID)}
 	}
 
