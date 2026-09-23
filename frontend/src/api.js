@@ -49,3 +49,16 @@ export async function postBitjita(path, jsonBody) {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }
+
+/**
+ * XP history recorded by the backend (also starts recording the player).
+ * @param {string} playerEntityId
+ * @param {number} since - unix seconds; only newer samples are returned
+ */
+export async function fetchXpHistory(playerEntityId, since = 0) {
+  const url = new URL(`/api/xp-history/${playerEntityId}`, window.location.origin)
+  if (since) url.searchParams.set('since', String(since))
+  const res = await fetch(url.toString())
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  return res.json()
+}

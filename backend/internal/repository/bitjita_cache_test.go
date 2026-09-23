@@ -40,6 +40,18 @@ func TestBitjitaCachePolicy(t *testing.T) {
 	if got := BitjitaCachePolicy("/players/1/stats", ""); got != "live" {
 		t.Fatalf("player: got %q", got)
 	}
+	if got := BitjitaCachePolicy("/static/experience/levels.json", ""); got != "permanent" {
+		t.Fatalf("static levels: got %q", got)
+	}
+}
+
+func TestBitjitaUpstreamPath(t *testing.T) {
+	if got := bitjitaUpstreamPath("/players/1/skill-rankings"); got != "/api/players/1/skill-rankings" {
+		t.Fatalf("api path: got %q", got)
+	}
+	if got := bitjitaUpstreamPath("/static/experience/levels.json"); got != "/static/experience/levels.json" {
+		t.Fatalf("static path: got %q", got)
+	}
 }
 
 func TestIconAssetPathCandidatesKeepsGeneratedIconsPathFirst(t *testing.T) {

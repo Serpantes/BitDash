@@ -10,9 +10,11 @@ const healthByPlayer = reactive({})
 const staminaByPlayer = reactive({})
 const satiationByPlayer = reactive({})
 const characterStatsByPlayer = reactive({})
+const experienceByPlayer = reactive({})
 
 const subscribedChannels = new Set()
 const subscribedPlayers = new Set()
+const experiencePlayers = new Set()
 let ws = null
 let reconnectTimer = null
 let reconnectAttempts = 0
@@ -26,6 +28,10 @@ function playerChannels(playerId) {
     `satiation_state:${id}`,
     `character_stats_state:${id}`,
   ]
+}
+
+function experienceChannel(playerId) {
+  return `experience_state:${playerId}`
 }
 
 function sendJson(payload) {
@@ -73,6 +79,15 @@ function updateCharacterStats(playerId, data) {
   }
 }
 
+function updateExperience(playerId, data) {
+  if (!Array.isArray(data?.experience_stacks)) return
+  const xp = {}
+  data.experience_stacks.forEach((stack) => {
+    xp[String(stack.skill_id)] = Number(stack.quantity) || 0
+  })
+  experienceByPlayer[String(playerId)] = { xp, updatedAt: data.timestamp ?? Date.now() }
+}
+
 function handleMessage(raw) {
   let text = raw
   if (typeof text === 'string' && text.includes('"bitmap"')) {
@@ -98,6 +113,9 @@ function handleMessage(raw) {
       case 'character_stats_state':
         updateCharacterStats(playerId, msg.data)
         break
+      case 'experience_state':
+        updateExperience(playerId, msg.data)
+        break
       default:
         break
     }
@@ -106,7 +124,7 @@ function handleMessage(raw) {
 
 function scheduleReconnect() {
   if (reconnectTimer) return
-  if (subscribedPlayers.size === 0) return
+  if (subscribedChannels.size === 0) return
   const delay = Math.min(30000, 1000 * (reconnectAttempts + 1))
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
@@ -119,7 +137,7 @@ function bindVisibilityReconnect() {
   if (visibilityListenerBound || typeof document === 'undefined') return
   visibilityListenerBound = true
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || subscribedPlayers.size === 0) return
+    if (document.visibilityState !== 'visible' || subscribedChannels.size === 0) return
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       reconnectAttempts = 0
       connect()
@@ -187,7 +205,27 @@ function syncPlayerSubscriptions(playerIds) {
     if (!next.has(id)) unsubscribePlayer(id)
   })
   next.forEach((id) => subscribePlayer(id))
-  if (next.size === 0 && ws) {
+  closeIfIdle()
+}
+
+/** Skill blocks only need experience_state, independent of the character-block channels. */
+function syncExperienceSubscriptions(playerIds) {
+  const next = new Set(playerIds.map((id) => String(id)))
+  const removed = [...experiencePlayers].filter((id) => !next.has(id))
+  const added = [...next].filter((id) => !experiencePlayers.has(id))
+  removed.forEach((id) => {
+    experiencePlayers.delete(id)
+    delete experienceByPlayer[id]
+  })
+  added.forEach((id) => experiencePlayers.add(id))
+  unsubscribeChannels(removed.map(experienceChannel))
+  subscribeChannels(added.map(experienceChannel))
+  if (added.length) connect()
+  closeIfIdle()
+}
+
+function closeIfIdle() {
+  if (subscribedChannels.size === 0 && ws) {
     ws.close()
     ws = null
   }
@@ -213,9 +251,11 @@ export function useBitjitaLive() {
     staminaByPlayer,
     satiationByPlayer,
     characterStatsByPlayer,
+    experienceByPlayer,
     subscribePlayer,
     unsubscribePlayer,
     syncPlayerSubscriptions,
+    syncExperienceSubscriptions,
     liveSnapshot,
   }
 }

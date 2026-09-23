@@ -53,7 +53,7 @@
               <span v-if="marketDeviationCount(item.inventoryId, 'above') > 0" class="market-dev-badge market-dev-badge--above">▲ {{ marketDeviationCount(item.inventoryId, 'above') }}</span>
               <span v-if="marketDeviationCount(item.inventoryId, 'below') > 0" class="market-dev-badge market-dev-badge--below">▼ {{ marketDeviationCount(item.inventoryId, 'below') }}</span>
             </template>
-            <span v-else-if="!isCharacterBlock(item) && !isMapBlock(item) && !isPlannerBlock(item)" class="inv-player">{{ blockOwnerLabel(item) }}</span>
+            <span v-else-if="!isCharacterBlock(item) && !isMapBlock(item) && !isPlannerBlock(item) && !isSkillBlock(item)" class="inv-player">{{ blockOwnerLabel(item) }}</span>
           </div>
           <div class="inv-header-actions">
             <div v-if="isMarketBlock(item)" class="tile-size-switch">
@@ -68,6 +68,38 @@
                 class="tile-size-btn"
                 :class="{ active: marketTileSize(item.inventoryId) === 'large' }"
                 @click.stop="setMarketTileSize(item.inventoryId, 'large')"
+              >
+                Больш.
+              </button>
+            </div>
+            <div v-if="isPlannerBlock(item)" class="tile-size-switch">
+              <button
+                class="tile-size-btn"
+                :class="{ active: plannerTileSize(item.inventoryId) === 'small' }"
+                @click.stop="setPlannerTileSize(item.inventoryId, 'small')"
+              >
+                Мал.
+              </button>
+              <button
+                class="tile-size-btn"
+                :class="{ active: plannerTileSize(item.inventoryId) === 'large' }"
+                @click.stop="setPlannerTileSize(item.inventoryId, 'large')"
+              >
+                Больш.
+              </button>
+            </div>
+            <div v-if="isSkillBlock(item)" class="tile-size-switch">
+              <button
+                class="tile-size-btn"
+                :class="{ active: skillTileSize(item.inventoryId) === 'small' }"
+                @click.stop="setSkillTileSize(item.inventoryId, 'small')"
+              >
+                Мал.
+              </button>
+              <button
+                class="tile-size-btn"
+                :class="{ active: skillTileSize(item.inventoryId) === 'large' }"
+                @click.stop="setSkillTileSize(item.inventoryId, 'large')"
               >
                 Больш.
               </button>
@@ -299,6 +331,23 @@
             </div>
           </div>
         </template>
+        <template v-else-if="isSkillBlock(item)">
+          <SkillProgressCard
+            :level-table="levelTable"
+            :xp="skillXp(item)"
+            :rank="state[item.inventoryId]?.skillRanking?.rank ?? null"
+            :total-players="state[item.inventoryId]?.skillRanking?.totalPlayers ?? null"
+            :skill-id="item.skillId"
+            :skill-title="item.skillTitle"
+            :size="skillTileSize(item.inventoryId)"
+            :history="skillHistory(item)"
+            :tracked-since="skillTrackedSince(item)"
+            :chart-tab="item.skillChartTab"
+            :pace-period="item.skillPacePeriod"
+            :pace-mode="item.skillPaceMode"
+            @update-view="updatePinnedBlock(item.inventoryId, $event)"
+          />
+        </template>
         <template v-else-if="isPlannerBlock(item)">
           <div class="planner-block">
             <div v-if="plannerTarget(item.inventoryId)" class="planner-target planner-target--readonly">
@@ -325,8 +374,22 @@
             <div v-else-if="plannerBlockError(item.inventoryId)" class="planner-error">{{ plannerBlockError(item.inventoryId) }}</div>
             <div v-else-if="plannerTarget(item.inventoryId) && !plannerHasRecipe(item.inventoryId)" class="planner-hint">Нет рецепта крафта — базовый ресурс.</div>
             <div v-else-if="plannerTarget(item.inventoryId) && plannerMaterials(item.inventoryId).length === 0" class="planner-hint">Нет данных о материалах.</div>
-            <ul v-else-if="plannerMaterials(item.inventoryId).length" class="planner-materials">
-              <li v-for="mat in plannerMaterials(item.inventoryId)" :key="`${mat.itemType}-${mat.id}`" class="planner-material-row">
+            <ul
+              v-else-if="plannerMaterialRows(item.inventoryId).length"
+              class="planner-materials"
+              :class="{ 'planner-materials--tree': plannerTileSize(item.inventoryId) === 'large' }"
+            >
+              <li
+                v-for="(mat, idx) in plannerMaterialRows(item.inventoryId)"
+                :key="`${mat.itemType}-${mat.id}-${mat.depth}-${idx}`"
+                class="planner-material-row"
+                :class="{
+                  'planner-material-row--nested': mat.depth > 0,
+                  'planner-material-row--leaf': !mat.children?.length && mat.depth > 0,
+                }"
+                :style="mat.depth > 0 ? { paddingLeft: `${8 + mat.depth * 14}px` } : undefined"
+              >
+                <span v-if="mat.depth > 0" class="planner-tree-guide" aria-hidden="true">└</span>
                 <ItemCard
                   variant="mini"
                   :name="plannerItemMeta(mat).name"
@@ -387,6 +450,7 @@
           <span v-if="wizard.blockType === 'inventory'" class="wizard-step" :class="{ active: wizard.step === 'inventory' }">Инвентарь</span>
           <span v-if="wizard.blockType === 'market'" class="wizard-step" :class="{ active: wizard.step === 'search' }">Игрок</span>
           <span v-if="wizard.blockType === 'character'" class="wizard-step" :class="{ active: wizard.step === 'search' }">Игрок</span>
+          <span v-if="wizard.blockType === 'skill'" class="wizard-step" :class="{ active: wizard.step === 'skill' }">Навык</span>
         </div>
 
         <div v-if="wizard.step === 'type'" class="wizard-panel">
@@ -401,6 +465,10 @@
           <button class="choice-card" :class="{ active: wizard.blockType === 'character' }" @click="chooseBlockType('character')">
             <span class="choice-title">Персонаж</span>
             <span class="choice-text">Показатели персонажа: ХП, Стамина и Насыщенность в виде полосок. Обновляются в реальном времени.</span>
+          </button>
+          <button class="choice-card" :class="{ active: wizard.blockType === 'skill' }" @click="chooseBlockType('skill')">
+            <span class="choice-title">Прокачка профессии</span>
+            <span class="choice-text">Прогресс навыка до 100 уровня: текущий уровень, путь по кривой опыта и место среди всех игроков.</span>
           </button>
           <button class="choice-card" :class="{ active: wizard.blockType === 'map' }" @click="chooseBlockType('map')">
             <span class="choice-title">Карта</span>
@@ -429,7 +497,7 @@
               v-model="wizard.query"
               class="wizard-input"
               type="text"
-              :placeholder="wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.sourceType === 'player' ? 'Имя игрока...' : 'Название клейма...'"
+              :placeholder="wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.blockType === 'skill' || wizard.sourceType === 'player' ? 'Имя игрока...' : 'Название клейма...'"
             />
             <span v-if="wizard.searching" class="wizard-searching-hint">...</span>
           </div>
@@ -485,6 +553,31 @@
                     <span class="wizard-preview-qty">{{ wizardPreviewQty(pocket.contents) }}</span>
                   </div>
                 </div>
+              </button>
+            </section>
+          </div>
+        </div>
+
+        <div v-else-if="wizard.step === 'skill'" class="wizard-panel">
+          <div v-if="wizard.loadingSkills" class="placeholder">Загрузка навыков...</div>
+          <div v-else-if="wizard.error" class="wizard-error">{{ wizard.error }}</div>
+          <div v-else class="wizard-inventory-list">
+            <section v-for="group in wizardSkillGroups" :key="group.id" class="wizard-inventory-group">
+              <h3 class="wizard-inventory-group-title">{{ group.label }}</h3>
+              <button
+                v-for="skill in group.items"
+                :key="skill.id"
+                class="wizard-inventory wizard-skill"
+                :disabled="isPinned(skillBlockId(wizard.selectedEntity?.entityId, skill.id))"
+                @click="addWizardSkill(skill)"
+              >
+                <span class="wizard-skill-glyph">{{ skillGlyph(skill.id) }}</span>
+                <span class="wizard-skill-name">
+                  <span class="result-title">{{ skill.name }}</span>
+                  <span v-if="isPinned(skillBlockId(wizard.selectedEntity?.entityId, skill.id))" class="result-meta">уже добавлен</span>
+                </span>
+                <span class="wizard-skill-level">ур. {{ skill.level }}</span>
+                <span class="wizard-skill-rank">{{ skill.rank ? `#${skill.rank.toLocaleString('ru-RU')}` : '—' }}</span>
               </button>
             </section>
           </div>
@@ -590,22 +683,33 @@
 
 <script>
 import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue'
-import { fetchBitjita, postBitjita } from '../api'
+import { fetchBitjita, fetchXpHistory, postBitjita } from '../api'
 import { usePinned } from '../composables/usePinned'
 import { useItemCache } from '../composables/useItemCache'
 import { useBitjitaLive } from '../composables/useBitjitaLive'
 import { useStaminaAlerts } from '../composables/useStaminaAlerts'
 import { activeBuffsFromPayload, hasActiveFoodBuff } from '../playerBuffs'
 import { characterVitalsFromStats, formatVitalsValue, vitalsBarPercent } from '../playerStats'
-import { computeCraftMaterialsFromRecipes, listRecipeOptions, resolveRecipeId } from '../plannerCrafting'
+import {
+  buildCraftTreeFromRecipes,
+  collectCraftTreeItemRefs,
+  computeCraftMaterialsFromRecipes,
+  ensureCraftTreeRecipeCache,
+  flattenCraftTree,
+  listRecipeOptions,
+  resolveRecipeId,
+} from '../plannerCrafting'
 import { dedupePlannerSearchResults, normalizePlannerSearchEntry } from '../plannerSearch'
+import { SKILL_CATEGORIES, levelForXp, parseLevelTable, skillGlyph } from '../skillProgress'
+import { mergeHistoryPoints, splitHistorySamples } from '../xpHistory'
 import ItemCard from './ItemCard.vue'
+import SkillProgressCard from './SkillProgressCard.vue'
 
 const SEARCH_DEBOUNCE_MS = 500
 
 export default {
   name: 'PinnedDashboard',
-  components: { ItemCard },
+  components: { ItemCard, SkillProgressCard },
   setup() {
     const { pinned, isPinned, unpin, pinBlock, updatePinnedLayout, updatePinnedBlock } = usePinned()
     const state = reactive({})
@@ -634,9 +738,15 @@ export default {
       plannerCraftRecipes: [],
       plannerQuantity: 1,
       plannerLoadingRecipes: false,
+      skillOptions: [],
+      loadingSkills: false,
     })
+    const levelTable = ref(null)
+    let levelTablePromise = null
+    // playerId → { trackedSince, lastT, bySkill: { skillId: frozen [[unixSec, xp], ...] } }
+    const xpHistory = reactive({})
     const { resolveItem, prefetch, prefetchItems, seedCatalog } = useItemCache()
-    const { syncPlayerSubscriptions, liveSnapshot, staminaByPlayer } = useBitjitaLive()
+    const { syncPlayerSubscriptions, syncExperienceSubscriptions, experienceByPlayer, liveSnapshot, staminaByPlayer } = useBitjitaLive()
     const BULK_CHUNK = 100
     const MAP_EMBED_PATH = '/map-embed/'
     const MAP_ROADS_LAYER = 'roadsLayer'
@@ -651,6 +761,7 @@ export default {
     const wizardSteps = computed(() => {
       if (wizard.blockType === 'inventory') return ['type', 'source', 'search', 'inventory']
       if (wizard.blockType === 'planner') return ['type', 'planner']
+      if (wizard.blockType === 'skill') return ['type', 'search', 'skill']
       return ['type', 'search']
     })
     const wizardInventoryCategoryOrder = [
@@ -678,14 +789,19 @@ export default {
         .map((cat) => buckets[cat.id])
         .filter((group) => group.items.length > 0)
     })
+    const wizardSkillGroups = computed(() => SKILL_CATEGORIES
+      .map((cat) => ({ ...cat, items: wizard.skillOptions.filter((skill) => skill.category === cat.id) }))
+      .filter((group) => group.items.length > 0))
     const wizardSubtitle = computed(() => {
       if (wizard.step === 'type') return 'Выбери, какой вид блока добавить на дашборд.'
       if (wizard.step === 'source') return 'Выбери, откуда взять инвентарь.'
       if (wizard.step === 'search') {
         if (wizard.blockType === 'character') return 'Найди игрока, чтобы следить за его показателями.'
+        if (wizard.blockType === 'skill') return 'Найди игрока, чью прокачку отслеживать.'
         if (wizard.blockType === 'market' || wizard.sourceType === 'player') return 'Найди игрока по имени.'
         return 'Найди клейм по названию.'
       }
+      if (wizard.step === 'skill') return 'Выбери навык — рядом текущий уровень и место в рейтинге.'
       if (wizard.step === 'planner') {
         return wizard.editInventoryId
           ? 'Измените предмет, рецепт и количество для этого блока.'
@@ -766,6 +882,8 @@ export default {
           activeRecipe: null,
           hasRecipe: false,
           materials: [],
+          materialTree: null,
+          recipeCache: {},
           loading: false,
           error: null,
         }
@@ -814,6 +932,25 @@ export default {
     function plannerMaterials(inventoryId) {
       return ensurePlannerState(inventoryId).materials
     }
+    function plannerTileSize(inventoryId) {
+      const block = pinned.value.find((p) => p.inventoryId === inventoryId)
+      return block?.plannerTileSize === 'large' ? 'large' : 'small'
+    }
+    function setPlannerTileSize(inventoryId, size) {
+      if (size !== 'small' && size !== 'large') return
+      updatePinnedBlock(inventoryId, { plannerTileSize: size })
+      if (size === 'large') {
+        const st = ensurePlannerState(inventoryId)
+        if (st.target?.id && !st.materialTree) calculatePlannerMaterials(inventoryId)
+      }
+    }
+    function plannerMaterialRows(inventoryId) {
+      const st = ensurePlannerState(inventoryId)
+      if (plannerTileSize(inventoryId) === 'large' && st.materialTree?.children?.length) {
+        return flattenCraftTree(st.materialTree.children)
+      }
+      return st.materials.map((mat) => ({ ...mat, depth: 0, children: [] }))
+    }
     function plannerLoading(inventoryId) {
       return ensurePlannerState(inventoryId).loading
     }
@@ -835,6 +972,72 @@ export default {
       }
       return data
     }
+    async function fetchPlannerTargetDetails(target) {
+      let resolvedTarget = { id: String(target.id), itemType: target.itemType ?? 0 }
+      let data = await fetchCraftDetails(resolvedTarget.itemType, resolvedTarget.id)
+      let recipes = data.craftingRecipes ?? []
+
+      const canCraftSelf = recipes.some((r) => {
+        if (!r.consumedItems?.length) return false
+        if (!r.craftedItems?.some((c) => String(c.id) === String(resolvedTarget.id))) return false
+        return !/recraft/i.test(r.name ?? '')
+      })
+
+      if (!canCraftSelf) {
+        const name = plannerItemMeta(resolvedTarget).name
+        const tier = plannerItemMeta(resolvedTarget).tier
+        try {
+          const search = await fetchBitjita('/items', { q: name })
+          for (const raw of search.items ?? []) {
+            const candidate = { id: String(raw.id), itemType: 0 }
+            if (plannerItemMeta(candidate).name !== name) continue
+            if (Number(plannerItemMeta(candidate).tier) !== Number(tier)) continue
+            if (String(candidate.id) === String(resolvedTarget.id)) continue
+            try {
+              const altData = await fetchCraftDetails(0, candidate.id)
+              const altRecipes = altData.craftingRecipes ?? []
+              const altCanCraft = altRecipes.some((r) =>
+                r.consumedItems?.length &&
+                r.craftedItems?.some((c) => String(c.id) === String(candidate.id)) &&
+                !/recraft/i.test(r.name ?? ''),
+              )
+              if (altCanCraft) {
+                resolvedTarget = candidate
+                data = altData
+                recipes = altRecipes
+                break
+              }
+            } catch {
+              // skip candidate
+            }
+          }
+        } catch {
+          // search failed — keep original target
+        }
+      }
+
+      return { target: resolvedTarget, recipes, data }
+    }
+    async function fetchCraftRecipesSafe(itemType, itemId) {
+      const id = String(itemId ?? '').trim()
+      if (!/^\d+$/.test(id)) return []
+      const paths = itemType === 1
+        ? [`/cargo/${id}`, `/items/${id}`]
+        : [`/items/${id}`, `/cargo/${id}`]
+      for (const path of paths) {
+        try {
+          const data = await fetchBitjita(path)
+          const entity = data.item ?? data.cargo
+          if (entity) {
+            seedCatalog(path.startsWith('/cargo') ? { cargos: [entity] } : { items: [entity] })
+          }
+          return data.craftingRecipes ?? []
+        } catch {
+          // BitJita may reject recipe ingredient IDs (e.g. cargo stacks) — treat as leaf.
+        }
+      }
+      return []
+    }
     async function calculatePlannerMaterials(inventoryId, options = {}) {
       const st = ensurePlannerState(inventoryId)
       const target = st.target
@@ -846,18 +1049,22 @@ export default {
         if (options.reuseRecipes && st.craftRecipes?.length) {
           recipes = st.craftRecipes
         } else {
-          const data = await fetchCraftDetails(target.itemType, target.id)
-          recipes = data.craftingRecipes ?? []
+          const resolved = await fetchPlannerTargetDetails(target)
+          if (resolved.target.id !== target.id || resolved.target.itemType !== target.itemType) {
+            st.target = resolved.target
+          }
+          recipes = resolved.recipes
           st.craftRecipes = recipes
 
           const pin = pinned.value.find((p) => p.inventoryId === inventoryId)
           const preferredId = st.selectedRecipeId ?? pin?.plannerRecipeId ?? null
-          st.selectedRecipeId = resolveRecipeId(recipes, target.id, preferredId)
+          st.selectedRecipeId = resolveRecipeId(recipes, st.target.id, preferredId)
         }
 
+        const activeTarget = st.target
         const result = computeCraftMaterialsFromRecipes({
-          itemId: target.id,
-          itemType: target.itemType,
+          itemId: activeTarget.id,
+          itemType: activeTarget.itemType,
           quantity: st.quantity,
           recipes,
           recipeId: st.selectedRecipeId,
@@ -865,13 +1072,45 @@ export default {
         st.activeRecipe = result.recipe
         st.hasRecipe = result.hasRecipe
         st.materials = result.materials
-        await prefetchItems([
-          { id: target.id, itemType: target.itemType },
+
+        if (plannerTileSize(inventoryId) === 'large') {
+          const recipeCache = { ...st.recipeCache }
+          const rootKey = `${activeTarget.itemType}:${activeTarget.id}`
+          recipeCache[rootKey] = recipes
+          await ensureCraftTreeRecipeCache({
+            itemId: activeTarget.id,
+            itemType: activeTarget.itemType,
+            quantity: st.quantity,
+            recipes,
+            recipeId: st.selectedRecipeId,
+            recipeCache,
+            fetchRecipes: fetchCraftRecipesSafe,
+          })
+          st.recipeCache = recipeCache
+          st.materialTree = buildCraftTreeFromRecipes({
+            itemId: activeTarget.id,
+            itemType: activeTarget.itemType,
+            quantity: st.quantity,
+            recipes,
+            recipeId: st.selectedRecipeId,
+            recipeCache,
+          })
+        } else {
+          st.materialTree = null
+        }
+
+        const prefetchRefs = [
+          { id: activeTarget.id, itemType: activeTarget.itemType },
           ...result.materials,
-        ])
+        ]
+        if (st.materialTree?.children?.length) {
+          prefetchRefs.push(...collectCraftTreeItemRefs(st.materialTree.children))
+        }
+        await prefetchItems(prefetchRefs)
       } catch (e) {
         st.error = e.message
         st.materials = []
+        st.materialTree = null
         st.activeRecipe = null
         st.hasRecipe = false
       } finally {
@@ -1481,12 +1720,14 @@ export default {
       const playerIds = [...new Set(pinned.value.filter((p) => sourceType(p) === 'player' && !isMarketBlock(p) && !isCharacterBlock(p) && !isMapBlock(p)).map((p) => p.playerEntityId))]
       const marketPlayerIds = [...new Set(pinned.value.filter((p) => isMarketBlock(p)).map((p) => p.playerEntityId))]
       const characterPlayerIds = [...new Set(pinned.value.filter((p) => isCharacterBlock(p)).map((p) => p.playerEntityId))]
+      const skillPlayerIds = [...new Set(pinned.value.filter((p) => isSkillBlock(p)).map((p) => p.playerEntityId))]
       const claimIds = [...new Set(pinned.value.filter((p) => sourceType(p) === 'claim').map((p) => p.claimEntityId))]
       await Promise.all([
         ...playerIds.map(loadForPlayer),
         ...claimIds.map(loadForClaim),
         ...marketPlayerIds.map(loadMarketForPlayer),
         ...characterPlayerIds.map(loadCharacterStats),
+        ...skillPlayerIds.map(loadSkillProgress),
       ])
     }
 
@@ -1577,7 +1818,11 @@ export default {
       const pinItem = pinned.value.find((p) => p.inventoryId === inventoryId)
       if (isMapBlock(pinItem)) return mapTileSize(inventoryId) === 'small' ? 1 : 2
       if (isCharacterBlock(pinItem)) return 1
-      if (isPlannerBlock(pinItem)) return plannerMaterials(inventoryId).length > 6 ? 2 : 1
+      if (isSkillBlock(pinItem)) return skillTileSize(inventoryId) === 'large' ? 2 : 1
+      if (isPlannerBlock(pinItem)) {
+        if (plannerTileSize(inventoryId) === 'large') return 2
+        return plannerMaterials(inventoryId).length > 6 ? 2 : 1
+      }
       if (isMarketBlock(pinItem)) return marketTileSize(inventoryId) === 'small' ? 1 : 2
       const itemCount = displayItemSlots(inventoryId).length
       const cargoCount = displayCargoSlots(inventoryId).length
@@ -1665,6 +1910,7 @@ export default {
       if (isPlannerBlock(item)) return !item.plannerTarget?.id
       if (isMarketBlock(item)) return marketRows(item.inventoryId).length === 0
       if (isCharacterBlock(item)) return !state[item.inventoryId]?.characterStats
+      if (isSkillBlock(item)) return !state[item.inventoryId]?.skillRanking || !levelTable.value
       return !hasInventoryGrid(item.inventoryId)
     }
     function formatBig(value) {
@@ -1788,6 +2034,8 @@ export default {
         plannerCraftRecipes: [],
         plannerQuantity: 1,
         plannerLoadingRecipes: false,
+        skillOptions: [],
+        loadingSkills: false,
       })
     }
     function openAddWizard() { resetWizard(); wizard.open = true }
@@ -1808,7 +2056,7 @@ export default {
         resetWizardPlannerDraft()
         return
       }
-      wizard.step = (type === 'market' || type === 'character') ? 'search' : 'source'
+      wizard.step = (type === 'market' || type === 'character' || type === 'skill') ? 'search' : 'source'
     }
     function chooseSourceType(type) {
       wizard.sourceType = type
@@ -1823,7 +2071,7 @@ export default {
         closeAddWizard()
         return
       }
-      if (wizard.blockType === 'market' || wizard.blockType === 'character') {
+      if (wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.blockType === 'skill') {
         wizard.step = wizard.step === 'search' ? 'type' : 'search'
         return
       }
@@ -1849,7 +2097,7 @@ export default {
       wizard.results = []
       wizard.inventories = []
       try {
-        const searchPlayers = wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.sourceType === 'player'
+        const searchPlayers = wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.blockType === 'skill' || wizard.sourceType === 'player'
         const res = await fetchBitjita(searchPlayers ? '/players' : '/claims', { q })
         if (gen !== wizardSearchGen) return
         wizard.results = searchPlayers ? (res.players ?? []) : (res.claims ?? [])
@@ -1883,6 +2131,10 @@ export default {
       }
       if (wizard.blockType === 'character') {
         addWizardCharacter(entity)
+        return
+      }
+      if (wizard.blockType === 'skill') {
+        loadWizardSkills(entity)
         return
       }
       wizard.loadingInventories = true
@@ -2034,6 +2286,147 @@ export default {
       if (!characterBuffsLoaded(inventoryId)) return true
       return hasActiveFoodBuff(state[inventoryId].characterBuffs)
     }
+    function isSkillBlock(pinItem) {
+      return blockType(pinItem) === 'skill'
+    }
+    function skillBlockId(playerEntityId, skillId) {
+      return `skill:${playerEntityId}:${skillId}`
+    }
+    function skillTileSize(inventoryId) {
+      const block = pinned.value.find((p) => p.inventoryId === inventoryId)
+      return block?.skillTileSize === 'large' ? 'large' : 'small'
+    }
+    function setSkillTileSize(inventoryId, size) {
+      if (size !== 'small' && size !== 'large') return
+      updatePinnedBlock(inventoryId, { skillTileSize: size })
+    }
+    function ensureLevelTable() {
+      if (levelTable.value) return Promise.resolve(levelTable.value)
+      if (!levelTablePromise) {
+        levelTablePromise = fetchBitjita('/static/experience/levels.json')
+          .then((rows) => {
+            const table = parseLevelTable(rows)
+            if (!table) throw new Error('нет таблицы опыта')
+            levelTable.value = table
+            return table
+          })
+          .finally(() => { levelTablePromise = null })
+      }
+      return levelTablePromise
+    }
+    async function loadSkillProgress(playerEntityId) {
+      const skillPinned = pinned.value.filter((p) => isSkillBlock(p) && String(p.playerEntityId) === String(playerEntityId))
+      if (!skillPinned.length) return
+      skillPinned.forEach((p) => {
+        const st = ensureInventoryState(p.inventoryId)
+        st.loading = !st.skillRanking
+        st.refreshing = Boolean(st.skillRanking)
+        st.error = null
+      })
+      try {
+        const [res] = await Promise.all([
+          fetchBitjita(`/players/${playerEntityId}/skill-rankings`),
+          ensureLevelTable(),
+          loadXpHistory(playerEntityId),
+        ])
+        const rankings = res?.rankings
+        if (!rankings) throw new Error('нет данных навыков')
+        skillPinned.forEach((p) => {
+          const st = ensureInventoryState(p.inventoryId)
+          st.loading = false
+          st.refreshing = false
+          // Players without XP in a skill are absent from its ranking.
+          st.skillRanking = rankings[String(p.skillId)] ?? { xp: 0, rank: null, totalPlayers: null }
+          st.updatedAt = new Date().toLocaleTimeString('ru-RU')
+        })
+      } catch (e) {
+        skillPinned.forEach((p) => {
+          const st = ensureInventoryState(p.inventoryId)
+          st.loading = false
+          st.refreshing = false
+          st.error = e.message
+        })
+      }
+    }
+    async function loadXpHistory(playerEntityId) {
+      const id = String(playerEntityId)
+      if (!xpHistory[id]) xpHistory[id] = { trackedSince: null, lastT: 0, bySkill: {} }
+      const entry = xpHistory[id]
+      try {
+        const res = await fetchXpHistory(id, entry.lastT)
+        entry.trackedSince = res.trackedSince || entry.trackedSince
+        Object.entries(splitHistorySamples(res.samples)).forEach(([skill, points]) => {
+          // Frozen: thousands of points, no need for deep reactivity.
+          entry.bySkill[skill] = Object.freeze(mergeHistoryPoints(entry.bySkill[skill], points))
+        })
+        ;(res.samples ?? []).forEach((sample) => { entry.lastT = Math.max(entry.lastT, sample.t) })
+      } catch {
+        // History is optional; the block still works from skill-rankings.
+      }
+    }
+    function skillHistory(pinItem) {
+      return xpHistory[String(pinItem.playerEntityId)]?.bySkill[String(pinItem.skillId)] ?? null
+    }
+    function skillTrackedSince(pinItem) {
+      return xpHistory[String(pinItem.playerEntityId)]?.trackedSince ?? null
+    }
+    /** Freshest XP: live socket, then the recorder, then skill-rankings (cached for a couple of minutes). */
+    function skillXp(pinItem) {
+      const skill = String(pinItem.skillId)
+      const live = experienceByPlayer[String(pinItem.playerEntityId)]?.xp?.[skill] ?? 0
+      const points = skillHistory(pinItem)
+      const recorded = points?.length ? points[points.length - 1][1] : 0
+      const ranked = state[pinItem.inventoryId]?.skillRanking?.xp ?? 0
+      return Math.max(live, recorded, ranked)
+    }
+    async function loadWizardSkills(player) {
+      wizard.step = 'skill'
+      wizard.loadingSkills = true
+      wizard.skillOptions = []
+      try {
+        const [skillsRes, rankingsRes, table] = await Promise.all([
+          fetchBitjita('/skills'),
+          fetchBitjita(`/players/${player.entityId}/skill-rankings`),
+          ensureLevelTable(),
+        ])
+        const rankings = rankingsRes?.rankings ?? {}
+        wizard.skillOptions = SKILL_CATEGORIES.flatMap((cat) => (skillsRes?.[cat.id] ?? []).map((skill) => {
+          const ranking = rankings[String(skill.id)]
+          return {
+            id: skill.id,
+            name: skill.name,
+            title: skill.title,
+            category: cat.id,
+            xp: ranking?.xp ?? 0,
+            rank: ranking?.rank ?? null,
+            level: levelForXp(table, ranking?.xp ?? 0),
+          }
+        })).sort((a, b) => b.xp - a.xp)
+        if (!wizard.skillOptions.length) wizard.error = 'Навыки не найдены'
+      } catch (e) {
+        wizard.error = e.message
+      } finally {
+        wizard.loadingSkills = false
+      }
+    }
+    function addWizardSkill(skill) {
+      const player = wizard.selectedEntity
+      if (!player) return
+      pinBlock({
+        blockType: 'skill',
+        sourceType: 'skill',
+        inventoryId: skillBlockId(player.entityId, skill.id),
+        playerEntityId: String(player.entityId),
+        playerName: player.username,
+        skillId: skill.id,
+        skillName: skill.name,
+        skillTitle: skill.title,
+        inventoryName: `${skill.name} · ${player.username}`,
+        skillTileSize: 'small',
+      })
+      closeAddWizard()
+      loadAll()
+    }
     function syncCharacterLiveSubscriptions() {
       const playerIds = pinned.value.filter((p) => isCharacterBlock(p)).map((p) => p.playerEntityId)
       syncPlayerSubscriptions(playerIds)
@@ -2057,7 +2450,7 @@ export default {
     })
     function wizardResultTitle(result) { return wizard.sourceType === 'player' ? result.username : result.name }
     function wizardResultMeta(result) {
-      if (wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.sourceType === 'player') return result.signedIn ? 'онлайн' : 'офлайн'
+      if (wizard.blockType === 'market' || wizard.blockType === 'character' || wizard.blockType === 'skill' || wizard.sourceType === 'player') return result.signedIn ? 'онлайн' : 'офлайн'
       return [result.regionName ? `R${result.regionId} · ${result.regionName}` : (result.regionId ? `R${result.regionId}` : null), result.tier ? `T${result.tier}` : null].filter(Boolean).join(' · ')
     }
     function inventoryLabel(inv) {
@@ -2122,6 +2515,11 @@ export default {
       () => syncCharacterLiveSubscriptions(),
       { immediate: true },
     )
+    watch(
+      () => [...new Set(pinned.value.filter((p) => isSkillBlock(p)).map((p) => String(p.playerEntityId)))].join(','),
+      (ids) => syncExperienceSubscriptions(ids ? ids.split(',') : []),
+      { immediate: true },
+    )
     onMounted(() => {
       updateDashboardCols()
       resizeObserver = new ResizeObserver(updateDashboardCols)
@@ -2138,6 +2536,7 @@ export default {
       clearTimeout(wizardPlannerSearchTimer)
       resizeObserver?.disconnect()
       syncPlayerSubscriptions([])
+      syncExperienceSubscriptions([])
       resetStaminaAlerts()
     })
 
@@ -2153,10 +2552,14 @@ export default {
       marketSearchSearching, marketSearchError, marketSearchResults, marketSearchSelected, marketSearchStats,
       marketSearchPriceLoading, marketPriceLines, blockIsEmpty,
       plannerTarget, plannerQuantity, plannerActiveRecipe, plannerBlockError,
-      plannerHasRecipe, plannerMaterials, plannerLoading, formatPlannerQty, plannerItemMeta,
+      plannerHasRecipe, plannerMaterials, plannerMaterialRows, plannerTileSize, setPlannerTileSize,
+      plannerLoading, formatPlannerQty, plannerItemMeta,
       openEditPlannerWizard, wizardPlannerCanConfirm, confirmWizardPlanner,
       setWizardPlannerQuery, selectWizardPlannerTarget, plannerRecipeOptionTitle, plannerRecipeOptionMeta,
       characterBars, characterBuffsLoaded, characterActiveBuffs, characterHasFoodBuff,
+      isSkillBlock, skillBlockId, skillTileSize, setSkillTileSize, levelTable, skillGlyph,
+      skillXp, skillHistory, skillTrackedSince, updatePinnedBlock,
+      wizardSkillGroups, addWizardSkill,
       formatVitalsValue, vitalsBarPercent,
       loadAll, startDrag, dragOverCell, dropOnCell, endDrag,
       openAddWizard, closeAddWizard, chooseBlockType, chooseSourceType, searchWizard,
@@ -2701,6 +3104,23 @@ export default {
   color: var(--muted);
   font-style: italic;
 }
+.planner-materials--tree {
+  overflow: auto;
+}
+.planner-material-row--nested {
+  border-color: rgba(138, 164, 255, 0.12);
+}
+.planner-material-row--leaf .planner-material-name {
+  color: var(--muted);
+}
+.planner-tree-guide {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0.65;
+}
 .planner-materials {
   list-style: none;
   margin: 0;
@@ -2781,6 +3201,12 @@ export default {
   color: var(--muted);
 }
 .wizard-inventory:disabled { opacity: 0.5; cursor: default; }
+.wizard-skill { display: grid; grid-template-columns: 24px 1fr auto 64px; align-items: center; gap: 10px; padding: 9px 14px; }
+.wizard-skill-glyph { font-size: 16px; text-align: center; }
+.wizard-skill-name { min-width: 0; }
+.wizard-skill-name .result-meta { margin-top: 1px; }
+.wizard-skill-level { font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.wizard-skill-rank { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 .wizard-inventory-head { display: flex; flex-direction: column; gap: 2px; }
 .wizard-inventory-preview {
   display: flex;

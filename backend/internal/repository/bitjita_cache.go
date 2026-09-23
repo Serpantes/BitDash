@@ -48,6 +48,9 @@ func BitjitaCachePolicy(path, query string) string {
 }
 
 func bitjitaCachePolicy(path, query string) string {
+	if isStaticPath(path) {
+		return "permanent"
+	}
 	if path == "/items" && query != "" {
 		return "permanent"
 	}
@@ -58,6 +61,19 @@ func bitjitaCachePolicy(path, query string) string {
 		return "permanent"
 	}
 	return "live"
+}
+
+// isStaticPath reports BitJita static game data (e.g. /static/experience/levels.json),
+// served from the site root rather than under /api.
+func isStaticPath(path string) bool {
+	return strings.HasPrefix(path, "/static/")
+}
+
+func bitjitaUpstreamPath(path string) string {
+	if isStaticPath(path) {
+		return path
+	}
+	return "/api" + path
 }
 
 func isNumericDetailPath(path, prefix string) bool {
@@ -94,7 +110,7 @@ func apiMemoryKey(path, query string) string {
 	return path + "?" + query
 }
 
-// GetAPI returns a cached or freshly fetched BitJita /api/* response body.
+// GetAPI returns a cached or freshly fetched BitJita /api/* (or /static/*) response body.
 func (b *BitjitaCache) GetAPI(path, query string) (body []byte, status int, cacheStatus string, err error) {
 	if path == "" {
 		path = "/"
@@ -115,7 +131,7 @@ func (b *BitjitaCache) GetAPI(path, query string) (body []byte, status int, cach
 		return data, http.StatusOK, "HIT", nil
 	}
 
-	targetURL := b.baseURL + "/api" + path
+	targetURL := b.baseURL + bitjitaUpstreamPath(path)
 	if query != "" {
 		targetURL += "?" + query
 	}

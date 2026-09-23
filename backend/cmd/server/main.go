@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ func main() {
 	playerResponseFile := os.Getenv("PLAYER_RESPONSE_FILE")
 	itemNameFile := os.Getenv("ITEM_NAME_FILE")
 	bitjitaCacheDir := os.Getenv("BITJITA_CACHE_DIR")
+	xpHistoryDir := os.Getenv("XP_HISTORY_DIR")
 	if external == "" {
 		external = "https://api.example.com/data"
 	}
@@ -37,6 +39,9 @@ func main() {
 	}
 	if bitjitaCacheDir == "" {
 		bitjitaCacheDir = "/var/lib/bitdash/bitjita-cache"
+	}
+	if xpHistoryDir == "" {
+		xpHistoryDir = "/var/lib/bitdash/xp-history"
 	}
 
 	liveCacheTTL := 2 * time.Minute
@@ -53,6 +58,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("bitjita cache: %v", err)
 	}
+
+	xpHistory, err := repository.NewXPHistory(xpHistoryDir, "wss://live.bitjita.com", bitjitaDataCache)
+	if err != nil {
+		log.Fatalf("xp history: %v", err)
+	}
+	xpHistory.Start(context.Background())
 
 	mapUpstreamCache := cache.New(3 * time.Minute)
 	bitjitaProxyHandler := delivery.NewBitjitaProxyHandler(bitjitaDataCache)
@@ -71,6 +82,7 @@ func main() {
 	http.HandleFunc("/api/bitjita/", bitjitaProxyHandler)
 	http.HandleFunc("/api/bitjita-icon", bitjitaIconHandler)
 	http.HandleFunc("/api/item-names", itemNamesHandler)
+	http.HandleFunc("/api/xp-history/", delivery.NewXPHistoryHandler(xpHistory))
 	http.Handle("/map-embed/_app/", delivery.NewBitcraftMapAssetProxyHandler())
 	http.Handle("/map-embed/", delivery.NewBitcraftMapEmbedHandler())
 	http.Handle("/api/map-proxy/", delivery.NewBitcraftMapProxyHandler())
@@ -95,8 +107,8 @@ func main() {
 	}
 
 	log.Printf(
-		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, player-response-file -> %s, item-name-file -> %s",
-		addr, external, bitjitaBaseURL, bitjitaCacheDir, playerResponseFile, itemNameFile,
+		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, player-response-file -> %s, item-name-file -> %s",
+		addr, external, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, playerResponseFile, itemNameFile,
 	)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
