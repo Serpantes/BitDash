@@ -171,11 +171,19 @@
           <h3 class="market-group-title">
             <span class="market-group-place">{{ t('marketBlock.completedTrades') }}</span>
             <span v-if="tradeList.length" class="market-group-coords">{{ t('marketBlock.ofTotal', { n: tradeList.length, total: tradesTotal }) }}</span>
+            <button
+              type="button"
+              role="switch"
+              class="trade-filter"
+              :aria-checked="showBuys ? 'true' : 'false'"
+              :title="t('marketBlock.showBuysTitle')"
+              @click="toggleBuys"
+            >{{ t('marketBlock.showBuys') }}<span class="bc-toggle" :class="{ on: showBuys }"></span></button>
           </h3>
-          <p v-if="!tradeList.length" class="market-note">{{ market?.marketTrades ? t('marketBlock.noTradesYet') : t('marketBlock.loadingTrades') }}</p>
+          <p v-if="!shownTrades.length" class="market-note">{{ !market?.marketTrades ? t('marketBlock.loadingTrades') : tradeList.length ? t('marketBlock.noSalesYet') : t('marketBlock.noTradesYet') }}</p>
           <component
             :is="tradeGood(row) ? 'button' : 'div'"
-            v-for="row in tradeList"
+            v-for="row in shownTrades"
             :key="row.key"
             :type="tradeGood(row) ? 'button' : undefined"
             class="mrow mrow--trade"
@@ -206,7 +214,7 @@
           <span>{{ t('marketBlock.week') }}</span>
           <span class="market-foot-total">
             {{ t('marketBlock.sold') }} <b><AppIcon name="coin" :size="12" />{{ formatAmount(week.sold) }}</b>
-            <span v-if="week.bought" class="market-foot-avg">{{ t('marketBlock.bought', { amount: formatAmount(week.bought) }) }}</span>
+            <span v-if="showBuys && week.bought" class="market-foot-avg">{{ t('marketBlock.bought', { amount: formatAmount(week.bought) }) }}</span>
           </span>
         </footer>
       </template>
@@ -268,6 +276,8 @@ export default {
     const collect = computed(() => collectSummary(collectRowList.value))
     const tradeList = computed(() => tradeRows(props.market?.marketTrades, props.block.playerEntityId))
     const tradesTotal = computed(() => props.market?.marketTradesTotal ?? tradeList.value.length)
+    const showBuys = computed(() => props.block.marketShowBuys !== false)
+    const shownTrades = computed(() => (showBuys.value ? tradeList.value : tradeList.value.filter((row) => row.side !== 'buy')))
     const week = computed(() => tradeTotals(tradeList.value, Date.now() - 7 * 86400000))
     const viewOptions = computed(() => [
       { id: 'sell', label: t('marketBlock.sellTab'), count: rows.value.length, title: t('marketBlock.sellTabTitle') },
@@ -313,6 +323,9 @@ export default {
       const sameGood = (other) => String(other.id) === picked.id && Number(other.itemType) === picked.itemType
       emit('update', { marketRecent: [picked, ...recentGoods.value.filter((other) => !sameGood(other))].slice(0, RECENT_LIMIT) })
     }
+    function toggleBuys() {
+      emit('update', { marketShowBuys: !showBuys.value })
+    }
     function clearRecent() {
       emit('update', { marketRecent: [] })
     }
@@ -354,8 +367,8 @@ export default {
 
     return {
       searchRef, lookup, view, viewOptions, ordersLoaded, rows, groups, totals, totalsTitle,
-      collect, collectGroupList, tradeList, tradesTotal, week, recentGoods,
-      setView, openGood, onSearchSelect, clearRecent,
+      collect, collectGroupList, tradeList, tradesTotal, showBuys, shownTrades, week, recentGoods,
+      setView, openGood, onSearchSelect, clearRecent, toggleBuys,
       claimLabel, claimCoords, formatMoment, pileName, pileDetail, pileGood, tradeDetail, tradeGood,
       goodMeta, formatAmount, formatPrice, formatPct, priceStanding, standingHint,
     }
@@ -505,6 +518,21 @@ button.mrow:focus-visible { outline: 2px solid var(--cream); outline-offset: -2p
 .mrow-diff--fair { color: var(--muted); }
 .mrow-diff--good { color: var(--success); }
 .mrow-diff--bad { color: var(--danger); }
+
+.trade-filter {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.trade-filter:hover { color: var(--text); }
+.trade-filter:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
 
 .mrow--trade { grid-template-columns: 32px minmax(0, 1fr) auto auto; }
 .mrow-amount { font-size: 13px; font-weight: 800; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-soft); }
