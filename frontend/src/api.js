@@ -1,6 +1,3 @@
-/**
- * Lightweight reachability check for a backend path.
- */
 export async function ping(path, timeout = 5000) {
   const url = path.startsWith('http') ? path : window.location.origin + path
   const start = Date.now()
@@ -16,32 +13,38 @@ export async function ping(path, timeout = 5000) {
   }
 }
 
-/**
- * Fetch data from a BitJita API path via the backend caching proxy.
- * @param {string} path - e.g. '/status', '/regions/status', '/status/chart'
- * @param {Record<string,string>} params - optional query params
- */
-export async function fetchBitjita(path, params = {}) {
+const REQUEST_TIMEOUT_MS = 45000
+
+// A request that never settles would keep its block "refreshing" forever and stall every
+// later poll that waits on it, so each one gives up after a bound.
+async function fetchWithTimeout(url, init = {}, timeout = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeout)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('timeout')
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function fetchBitjita(path, params = {}, { fresh = false } = {}) {
   const url = new URL('/api/bitjita' + path, window.location.origin)
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
-  const res = await fetch(url.toString())
+  const res = await fetchWithTimeout(url.toString(), fresh ? { headers: { 'Cache-Control': 'no-cache' } } : undefined)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }
 
-/** Ping BitJita API via backend proxy (default: /status). */
 export async function pingBitjita(path = '/status', timeout = 10000) {
   return ping(`/api/bitjita${path}`, timeout)
 }
 
-/**
- * POST to BitJita API via backend proxy (no GET cache).
- * @param {string} path - e.g. '/market/prices/bulk'
- * @param {unknown} jsonBody - serializable body
- */
 export async function postBitjita(path, jsonBody) {
   const url = new URL('/api/bitjita' + path, window.location.origin)
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithTimeout(url.toString(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(jsonBody ?? {}),
@@ -50,15 +53,16 @@ export async function postBitjita(path, jsonBody) {
   return res.json()
 }
 
-/**
- * XP history recorded by the backend (also starts recording the player).
- * @param {string} playerEntityId
- * @param {number} since - unix seconds; only newer samples are returned
- */
+export async function fetchMarketCatalog() {
+  const res = await fetch('/api/market-catalog')
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  return res.json()
+}
+
 export async function fetchXpHistory(playerEntityId, since = 0) {
   const url = new URL(`/api/xp-history/${playerEntityId}`, window.location.origin)
   if (since) url.searchParams.set('since', String(since))
-  const res = await fetch(url.toString())
+  const res = await fetchWithTimeout(url.toString(), {}, 20000)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }

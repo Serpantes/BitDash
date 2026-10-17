@@ -15,10 +15,19 @@ const experienceByPlayer = reactive({})
 const subscribedChannels = new Set()
 const subscribedPlayers = new Set()
 const experiencePlayers = new Set()
+const PROBE_IDLE_MS = 45000
+const PROBE_TIMEOUT_MS = 10000
+const WATCH_TICK_MS = 5000
+const OPEN_TIMEOUT_MS = 15000
 let ws = null
 let reconnectTimer = null
 let reconnectAttempts = 0
-let visibilityListenerBound = false
+let watchTimer = null
+let lastMessageAt = 0
+let lastTickAt = 0
+let openedAt = 0
+let probeSentAt = 0
+let lifecycleBound = false
 
 function playerChannels(playerId) {
   const id = String(playerId)
@@ -85,7 +94,7 @@ function updateExperience(playerId, data) {
   data.experience_stacks.forEach((stack) => {
     xp[String(stack.skill_id)] = Number(stack.quantity) || 0
   })
-  experienceByPlayer[String(playerId)] = { xp, updatedAt: data.timestamp ?? Date.now() }
+  experienceByPlayer[String(playerId)] = { xp, updatedAt: Date.now() }
 }
 
 function handleMessage(raw) {
@@ -123,60 +132,132 @@ function handleMessage(raw) {
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer) return
-  if (subscribedChannels.size === 0) return
+  if (reconnectTimer || subscribedChannels.size === 0) return
   const delay = Math.min(30000, 1000 * (reconnectAttempts + 1))
+  reconnectAttempts += 1
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
-    reconnectAttempts += 1
     connect()
   }, delay)
 }
 
-function bindVisibilityReconnect() {
-  if (visibilityListenerBound || typeof document === 'undefined') return
-  visibilityListenerBound = true
+function dropSocket() {
+  const socket = ws
+  ws = null
+  probeSentAt = 0
+  if (socket && socket.readyState !== WebSocket.CLOSED) socket.close()
+}
+
+// A socket can stay OPEN long after the link died (sleep, network switch, dead NAT entry);
+// an empty subscribe is answered by upstream, so silence after one means reconnect.
+function probe() {
+  if (ws?.readyState !== WebSocket.OPEN || probeSentAt) return
+  probeSentAt = Date.now()
+  ws.send(JSON.stringify({ type: 'subscribe', channels: [] }))
+}
+
+function reviveNow() {
+  if (subscribedChannels.size === 0) return
+  if (ws?.readyState === WebSocket.OPEN) {
+    probeSentAt = 0
+    probe()
+    return
+  }
+  if (ws?.readyState === WebSocket.CONNECTING) return
+  clearTimeout(reconnectTimer)
+  reconnectTimer = null
+  reconnectAttempts = 0
+  connect()
+}
+
+function watch() {
+  const now = Date.now()
+  const slept = lastTickAt && now - lastTickAt > WATCH_TICK_MS * 4
+  lastTickAt = now
+  if (subscribedChannels.size === 0) return
+  if (!ws) {
+    if (!reconnectTimer || slept) reviveNow()
+    return
+  }
+  if (ws.readyState === WebSocket.CONNECTING) {
+    if (now - openedAt > OPEN_TIMEOUT_MS) dropSocket()
+    return
+  }
+  if (ws.readyState !== WebSocket.OPEN) return
+  if (probeSentAt && now - probeSentAt > PROBE_TIMEOUT_MS) {
+    dropSocket()
+    scheduleReconnect()
+    return
+  }
+  if (slept) {
+    probeSentAt = 0
+    probe()
+  } else if (now - lastMessageAt > PROBE_IDLE_MS) {
+    probe()
+  }
+}
+
+function bindLifecycle() {
+  if (lifecycleBound || typeof window === 'undefined') return
+  lifecycleBound = true
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || subscribedChannels.size === 0) return
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      reconnectAttempts = 0
-      connect()
-    }
+    if (document.visibilityState === 'visible') reviveNow()
   })
+  window.addEventListener('online', reviveNow)
+  window.addEventListener('pageshow', reviveNow)
+}
+
+function startWatch() {
+  if (watchTimer) return
+  lastTickAt = Date.now()
+  watchTimer = setInterval(watch, WATCH_TICK_MS)
+}
+
+function stopWatch() {
+  clearInterval(watchTimer)
+  watchTimer = null
+  clearTimeout(reconnectTimer)
+  reconnectTimer = null
 }
 
 function connect() {
-  if (typeof WebSocket === 'undefined') return
+  if (typeof WebSocket === 'undefined' || subscribedChannels.size === 0) return
   if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return
 
-  bindVisibilityReconnect()
-  ws = new WebSocket(liveWebSocketUrl())
+  bindLifecycle()
+  startWatch()
+  const socket = new WebSocket(liveWebSocketUrl())
+  ws = socket
+  openedAt = Date.now()
+  probeSentAt = 0
 
-  ws.onopen = () => {
-    reconnectAttempts = 0
+  socket.onopen = () => {
+    if (ws !== socket) return
+    lastMessageAt = Date.now()
     if (subscribedChannels.size > 0) {
       sendJson({ type: 'subscribe', channels: [...subscribedChannels] })
     }
   }
 
-  ws.onmessage = (event) => {
+  socket.onmessage = (event) => {
+    if (ws !== socket) return
+    lastMessageAt = Date.now()
+    probeSentAt = 0
     reconnectAttempts = 0
     try {
       handleMessage(event.data)
     } catch {
-      // ignore malformed payloads
     }
   }
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    if (ws !== socket) return
     ws = null
     scheduleReconnect()
   }
 
-  ws.onerror = () => {
-    if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
-      ws.close()
-    }
+  socket.onerror = () => {
+    if (ws === socket && socket.readyState !== WebSocket.CLOSED) socket.close()
   }
 }
 
@@ -208,7 +289,6 @@ function syncPlayerSubscriptions(playerIds) {
   closeIfIdle()
 }
 
-/** Skill blocks only need experience_state, independent of the character-block channels. */
 function syncExperienceSubscriptions(playerIds) {
   const next = new Set(playerIds.map((id) => String(id)))
   const removed = [...experiencePlayers].filter((id) => !next.has(id))
@@ -225,10 +305,9 @@ function syncExperienceSubscriptions(playerIds) {
 }
 
 function closeIfIdle() {
-  if (subscribedChannels.size === 0 && ws) {
-    ws.close()
-    ws = null
-  }
+  if (subscribedChannels.size > 0) return
+  stopWatch()
+  dropSocket()
 }
 
 function liveSnapshot(playerId) {
