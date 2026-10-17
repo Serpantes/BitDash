@@ -16,10 +16,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// XPHistory records per-player skill XP over time from the BitJita live
-// experience_state channel, so the dashboard can chart leveling speed.
-// Samples go to <dir>/<playerId>.jsonl — at most one per player per minute,
-// holding only the skills whose XP changed since the previous sample.
 type XPHistory struct {
 	dir     string
 	wsURL   string
@@ -33,13 +29,11 @@ type XPHistory struct {
 	conn   *websocket.Conn
 }
 
-// XPSample is one stored point: unix seconds and absolute XP per changed skill id.
 type XPSample struct {
 	T int64            `json:"t"`
 	S map[string]int64 `json:"s"`
 }
 
-// XPHistoryResponse is what /api/xp-history/{playerId} returns.
 type XPHistoryResponse struct {
 	PlayerID     string     `json:"playerId"`
 	TrackedSince int64      `json:"trackedSince"`
@@ -56,15 +50,15 @@ type xpTrackedPlayer struct {
 type xpPlayerState struct {
 	loaded    bool
 	samples   []XPSample
-	written   map[string]int64 // last persisted XP per skill
-	latest    map[string]int64 // latest observed XP per skill
-	latestAt  int64            // unix seconds of the latest observation
+	written   map[string]int64
+	latest    map[string]int64
+	latestAt  int64
 	lastWrite int64
 }
 
 const (
 	xpFlushEvery      = 15 * time.Second
-	xpMinSampleGap    = 60 // seconds between persisted samples per player
+	xpMinSampleGap    = 60
 	xpPollEvery       = 10 * time.Minute
 	xpUntrackAfter    = 30 * 24 * time.Hour
 	xpTrackedFile     = "tracked.json"
@@ -92,7 +86,6 @@ func NewXPHistory(dir, wsURL string, bitjita *BitjitaCache) (*XPHistory, error) 
 	return h, nil
 }
 
-// Start runs the live subscription, the periodic flush and the REST fallback poll.
 func (h *XPHistory) Start(ctx context.Context) {
 	go h.pollAll()
 	go h.runLive(ctx)
@@ -113,7 +106,6 @@ func (h *XPHistory) every(ctx context.Context, d time.Duration, fn func()) {
 	}
 }
 
-// Track starts (or keeps) recording a player; the dashboard calls it on every history read.
 func (h *XPHistory) Track(playerID string) {
 	now := time.Now().Unix()
 	h.mu.Lock()
@@ -135,7 +127,6 @@ func (h *XPHistory) Track(playerID string) {
 	}
 }
 
-// History returns samples newer than `since` (unix seconds), including the latest unflushed observation.
 func (h *XPHistory) History(playerID string, since int64) XPHistoryResponse {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -158,7 +149,6 @@ func (h *XPHistory) History(playerID string, since int64) XPHistoryResponse {
 	return resp
 }
 
-// observe records XP values; XP never decreases, so stale (lagging) sources are ignored per skill.
 func (h *XPHistory) observe(playerID string, at int64, xp map[string]int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -229,7 +219,6 @@ func (h *XPHistory) pollAll() {
 	}
 }
 
-// poll reads /players/{id}/skill-rankings — the baseline for new players and a fallback when the socket drops.
 func (h *XPHistory) poll(playerID string) {
 	body, status, _, err := h.bitjita.GetAPI("/players/"+playerID+"/skill-rankings", "")
 	if err != nil || status != 200 {
@@ -349,7 +338,7 @@ func (h *XPHistory) subscribe(playerIDs []string) {
 	h.connMu.Lock()
 	defer h.connMu.Unlock()
 	if h.conn == nil {
-		return // subscribed on the next (re)connect
+		return
 	}
 	h.conn.WriteJSON(map[string]any{"type": "subscribe", "channels": channels}) //nolint:errcheck
 }
@@ -399,7 +388,6 @@ func changedSkills(written, latest map[string]int64) map[string]int64 {
 	return changed
 }
 
-// stateLocked lazily loads a player's samples from disk. Caller holds h.mu.
 func (h *XPHistory) stateLocked(playerID string) *xpPlayerState {
 	st := h.players[playerID]
 	if st == nil {
@@ -453,7 +441,6 @@ func (h *XPHistory) playerFile(playerID string) string {
 	return filepath.Join(h.dir, sanitizeCacheFileName(playerID)+".jsonl")
 }
 
-// saveTrackedLocked persists the tracked player list. Caller holds h.mu.
 func (h *XPHistory) saveTrackedLocked() {
 	data, err := json.MarshalIndent(h.tracked, "", "  ")
 	if err != nil {

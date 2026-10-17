@@ -14,10 +14,6 @@ function isStaminaLow(current, max) {
   return current <= max * LOW_RATIO || current <= 1
 }
 
-/**
- * Stamina sounds: full once on reaching max, low on every live update while depleted.
- * @param {() => Array<{ playerId: string, current: number, max: number }>} getSnapshots
- */
 export function useStaminaAlerts(getSnapshots) {
   const track = new Map()
 

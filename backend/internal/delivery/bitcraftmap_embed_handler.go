@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	_ "embed"
 	"io"
 	"net/http"
 	"regexp"
@@ -24,14 +25,8 @@ var (
 	bitcraftMapCloudflareTag = regexp.MustCompile(`<script[^>]*cloudflareinsights\.com/beacon[^>]*></script>\s*`)
 )
 
-const bitcraftMapHideUICSS = `<style id="bitdash-hide-map-ui">
-.relative.h-viewport > .absolute.left-3.z-ui { display: none !important; }
-</style>`
-
-const bitcraftMapMiniUICSS = `<style id="bitdash-mini-map-ui">
-.absolute.top-3.z-search { display: none !important; }
-.fixed.bottom-0.left-0.right-0.z-overlay.h-12 { display: none !important; }
-</style>`
+//go:embed bitcraftmap_bridge.js
+var bitcraftMapBridgeJS string
 
 const bitcraftMapFetchPatch = `<script id="bitdash-map-fetch-patch">
 (function () {
@@ -100,7 +95,6 @@ const bitcraftMapWebSocketPatch = `<script id="bitdash-map-websocket-patch">
 })();
 </script>`
 
-// NewBitcraftMapEmbedHandler serves bitcraftmap.com HTML with UI chrome hidden for dashboard embeds.
 func NewBitcraftMapEmbedHandler() http.Handler {
 	client := &http.Client{Timeout: 30 * time.Second}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,9 +116,10 @@ func NewBitcraftMapEmbedHandler() http.Handler {
 			return
 		}
 
-		mini := r.URL.Query().Get("bitdashMini") == "1"
 		upstreamQuery := r.URL.Query()
-		upstreamQuery.Del("bitdashMini")
+		for _, key := range []string{"bitdashMini", "bridge", "reload"} {
+			upstreamQuery.Del(key)
+		}
 		target := bitcraftMapOrigin + "/"
 		if encoded := upstreamQuery.Encode(); encoded != "" {
 			target += "?" + encoded
@@ -142,7 +137,7 @@ func NewBitcraftMapEmbedHandler() http.Handler {
 			return
 		}
 
-		html := transformBitcraftMapEmbedHTML(string(body), mini)
+		html := transformBitcraftMapEmbedHTML(string(body))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		if r.Method == http.MethodHead {
@@ -153,22 +148,18 @@ func NewBitcraftMapEmbedHandler() http.Handler {
 	})
 }
 
-func transformBitcraftMapEmbedHTML(html string, mini bool) string {
+func transformBitcraftMapEmbedHTML(html string) string {
 	html = bitcraftMapCSPMeta.ReplaceAllString(html, "")
 	html = bitcraftMapCloudflareJS.ReplaceAllString(html, "")
 	html = bitcraftMapCloudflareTag.ReplaceAllString(html, "")
 	if idx := strings.Index(html, "</head>"); idx >= 0 {
-		inject := bitcraftMapHideUICSS
-		if mini {
-			inject += bitcraftMapMiniUICSS
-		}
-		inject += bitcraftMapFetchPatch + bitcraftMapWebSocketPatch
+		inject := `<script id="bitdash-map-bridge">` + bitcraftMapBridgeJS + `</script>` +
+			bitcraftMapFetchPatch + bitcraftMapWebSocketPatch
 		html = html[:idx] + inject + html[idx:]
 	}
 	return html
 }
 
-// NewBitcraftMapMirroredProxy proxies a path prefix to the same path on bitcraftmap.com.
 func NewBitcraftMapMirroredProxy(pathPrefix string) http.Handler {
 	client := &http.Client{Timeout: 60 * time.Second}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +186,6 @@ func NewBitcraftMapMirroredProxy(pathPrefix string) http.Handler {
 	})
 }
 
-// NewBitcraftMapAssetProxyHandler proxies /map-embed/_app/* to bitcraftmap.com/_app/*.
 func NewBitcraftMapAssetProxyHandler() http.Handler {
 	client := &http.Client{Timeout: 60 * time.Second}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +212,6 @@ func NewBitcraftMapAssetProxyHandler() http.Handler {
 	})
 }
 
-// NewBitcraftMapUpstreamProxyHandler proxies map API hosts blocked by CORS in embed mode.
 func NewBitcraftMapUpstreamProxyHandler(c *cache.Cache) http.Handler {
 	client := &http.Client{Timeout: 120 * time.Second}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +264,6 @@ func NewBitcraftMapUpstreamProxyHandler(c *cache.Cache) http.Handler {
 	})
 }
 
-// NewBitcraftMapProxyHandler forwards same-origin API/marker requests from the embed page to bitcraftmap.com.
 func NewBitcraftMapProxyHandler() http.Handler {
 	client := &http.Client{Timeout: 60 * time.Second}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +315,6 @@ func fetchBitcraftMapWithHeaders(client *http.Client, method, target string) ([]
 	return body, resp.StatusCode, resp.Header, nil
 }
 
-// NewBitcraftMapFaviconHandler proxies bitcraftmap favicon for embedded map icons.
 func NewBitcraftMapFaviconHandler() http.HandlerFunc {
 	client := &http.Client{Timeout: 15 * time.Second}
 	return func(w http.ResponseWriter, r *http.Request) {

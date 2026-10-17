@@ -15,7 +15,6 @@ type playerFileStore struct {
 	mu   sync.Mutex
 }
 
-// NewPlayerFileStore creates file-based storage for player response snapshots.
 func NewPlayerFileStore(path string) usecase.PlayerResponseStore {
 	return &playerFileStore{path: path}
 }

@@ -49,15 +49,14 @@ export function usePinned() {
     pinned.value = pinned.value.filter((p) => p.inventoryId !== inventoryId)
   }
 
-  function updatePinnedLayout(inventoryId, layout) {
+  function setDashboardLayouts(cols, positions) {
     pinned.value = pinned.value.map((p) => {
-      if (p.inventoryId !== inventoryId) return p
+      const pos = positions[p.inventoryId]
+      if (!pos) return p
+      const { dashboardLayout, ...rest } = p
       return {
-        ...p,
-        dashboardLayout: {
-          ...(p.dashboardLayout ?? {}),
-          ...layout,
-        },
+        ...rest,
+        dashboardLayouts: { ...(p.dashboardLayouts ?? {}), [cols]: { x: pos.x, y: pos.y } },
       }
     })
   }
@@ -69,5 +68,5 @@ export function usePinned() {
     })
   }
 
-  return { pinned, isPinned, pin, pinBlock, unpin, updatePinnedLayout, updatePinnedBlock }
+  return { pinned, isPinned, pin, pinBlock, unpin, setDashboardLayouts, updatePinnedBlock }
 }

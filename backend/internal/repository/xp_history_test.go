@@ -30,7 +30,6 @@ func TestXPHistoryRecordsChangedSkillsAndReloads(t *testing.T) {
 
 	h.observe("42", 100, map[string]int64{"6": 1000, "5": 500})
 	h.flush()
-	// Lagging source (lower XP) is ignored; only the changed skill is stored next.
 	h.observe("42", 200, map[string]int64{"6": 900})
 	h.observe("42", 210, map[string]int64{"6": 1300, "5": 500})
 	h.players["42"].lastWrite = 0
@@ -47,7 +46,6 @@ func TestXPHistoryRecordsChangedSkillsAndReloads(t *testing.T) {
 		t.Fatalf("since filter: %#v", since.Samples)
 	}
 
-	// Unflushed observations are returned as a trailing pending sample.
 	h.observe("42", 230, map[string]int64{"6": 1400})
 	if resp := h.History("42", 210); len(resp.Samples) != 1 || resp.Samples[0].S["6"] != 1400 {
 		t.Fatalf("pending sample: %#v", resp.Samples)

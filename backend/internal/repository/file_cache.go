@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-// FileCache stores opaque blobs on disk (permanent, no TTL).
 type FileCache struct {
 	root string
 }

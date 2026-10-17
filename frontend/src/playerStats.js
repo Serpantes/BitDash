@@ -1,4 +1,3 @@
-/** BitJita `/players/{id}/stats` values[] field order (index = stat). */
 export const PLAYER_STAT_FIELDS = [
   'maxHealth',
   'maxStamina',
@@ -71,8 +70,6 @@ export function characterVitalsFromStats(statsPayload, live = {}) {
   const parsed = parsePlayerStatsValues(statValues)
   if (!parsed) return null
 
-  // Max values come from character stats (REST + character_stats_state), not health/stamina_state.
-  // Live health/stamina channels only drive current values.
   const maxHp = Number(parsed.maxHealth) || 100
   const maxStamina = Number(parsed.maxStamina) || 100
   const maxSatiation = Number(parsed.maxSatiation) || 100

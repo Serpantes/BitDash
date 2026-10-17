@@ -9,8 +9,6 @@ import (
 	"bitdash/backend/internal/repository"
 )
 
-// NewXPHistoryHandler serves GET /api/xp-history/{playerId}?since=<unix>.
-// Reading a player's history also (re)starts recording it.
 func NewXPHistoryHandler(h *repository.XPHistory) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

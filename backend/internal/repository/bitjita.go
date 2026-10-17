@@ -16,7 +16,6 @@ type bitjitaPlayerSource struct {
 	client  *http.Client
 }
 
-// NewBitjitaPlayerSource creates adapter for Bitjita external API.
 func NewBitjitaPlayerSource(baseURL string) usecase.PlayerSource {
 	cleaned := strings.TrimRight(baseURL, "/")
 	return &bitjitaPlayerSource{

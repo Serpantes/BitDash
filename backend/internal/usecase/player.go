@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 )
 
-// PlayerByIDRequest is an application request model for fetching a player by id.
 type PlayerByIDRequest struct {
 	ID string `json:"id"`
 }
 
-// PlayerByIDResponse is an application response model for external player payload.
-// Unknown nested structures are preserved as raw JSON to keep source adapters flexible.
 type PlayerByIDResponse struct {
 	Player       json.RawMessage   `json:"player"`
 	Claims       []json.RawMessage `json:"claims"`
@@ -20,17 +17,14 @@ type PlayerByIDResponse struct {
 	Skills       []json.RawMessage `json:"skills"`
 }
 
-// PlayerSource defines a replaceable data source boundary for player retrieval.
 type PlayerSource interface {
 	GetPlayerByID(ctx context.Context, request PlayerByIDRequest) (*PlayerByIDResponse, error)
 }
 
-// PlayerResponseStore defines persistence boundary for storing fetched player payloads.
 type PlayerResponseStore interface {
 	SavePlayerByIDResponse(ctx context.Context, request PlayerByIDRequest, response *PlayerByIDResponse) error
 }
 
-// PlayerService defines use-case boundary for delivery layer.
 type PlayerService interface {
 	GetPlayerByID(ctx context.Context, request PlayerByIDRequest) (*PlayerByIDResponse, error)
 }
@@ -40,7 +34,6 @@ type playerService struct {
 	store  PlayerResponseStore
 }
 
-// NewPlayerService creates use-case service backed by abstract source adapter.
 func NewPlayerService(source PlayerSource, store PlayerResponseStore) PlayerService {
 	return &playerService{source: source, store: store}
 }

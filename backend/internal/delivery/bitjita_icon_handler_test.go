@@ -47,7 +47,6 @@ func TestBitjitaIconHandlerUsesGeneratedIconsPath(t *testing.T) {
 		t.Fatalf("expected icon body, got %q", got)
 	}
 
-	// Second request should be served from disk cache (upstream closed would still work).
 	upstream.Close()
 	res2 := httptest.NewRecorder()
 	handler(res2, req)

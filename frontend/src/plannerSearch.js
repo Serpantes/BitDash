@@ -1,3 +1,5 @@
+import { locale, t } from './i18n'
+
 export function plannerSearchDedupeKey(entry) {
   const tier = Number(entry.tier) || 0
   const tag = entry.tag
@@ -7,7 +9,7 @@ export function plannerSearchDedupeKey(entry) {
 
 export function normalizePlannerSearchEntry(raw, itemType) {
   const id = raw?.id ?? raw?.itemId ?? raw?.item_id
-  const name = raw?.name ?? raw?.itemName ?? 'Предмет'
+  const name = raw?.name ?? raw?.itemName ?? t('common.item')
   return {
     id: String(id),
     itemType,
@@ -25,7 +27,6 @@ function shouldSkipPlannerSearchEntry(entry, name) {
   return false
 }
 
-/** One entry per tier + item type; rarity variants collapse to a single row. */
 export function dedupePlannerSearchResults(entries, itemMeta) {
   const filtered = entries.filter((e) => !shouldSkipPlannerSearchEntry(e, itemMeta(e).name))
   const byKey = new Map()
@@ -37,7 +38,7 @@ export function dedupePlannerSearchResults(entries, itemMeta) {
     .sort((a, b) => {
       const tierDiff = (Number(a.tier) || 0) - (Number(b.tier) || 0)
       if (tierDiff !== 0) return tierDiff
-      return itemMeta(a).name.localeCompare(itemMeta(b).name, 'ru')
+      return itemMeta(a).name.localeCompare(itemMeta(b).name, locale.value)
     })
     .slice(0, 16)
 }

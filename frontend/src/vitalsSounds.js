@@ -24,18 +24,15 @@ function playTone({ frequency = 440, type = 'sine', duration = 0.5, volume = 0.1
     osc.start(start)
     osc.stop(end)
   } catch {
-    // ignore autoplay / audio errors
   }
 }
 
-/** Stamina full: original tone twice. */
 export function playStaminaFullSound() {
   const tone = { frequency: 660, type: 'sine', duration: 0.45, volume: 0.14 }
   playTone({ ...tone, delay: 0 })
   playTone({ ...tone, delay: 0.25 })
 }
 
-/** Low stamina: lower tone, distinct from full. */
 export function playStaminaLowSound() {
   playTone({ frequency: 220, type: 'sawtooth', duration: 0.55, volume: 0.1 })
 }

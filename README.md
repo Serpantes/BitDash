@@ -21,3 +21,13 @@ npm run dev
 ```
 
 Configure external API URL via `EXTERNAL_API_URL` env var for backend (default in code is `https://api.example.com/data`).
+
+E2E tests (Playwright):
+
+```bash
+cd frontend
+npx playwright install chromium   # once
+npm run test:e2e
+```
+
+The config starts the Go backend (`go run ./cmd/server` on `:8099`, data in `frontend/.e2e-data`) and a Vite dev server (`:5174`), or reuses ones already running on those ports (override with `E2E_BACKEND_PORT` / `E2E_FRONTEND_PORT`). The map tests go through the live bitcraftmap.com proxy, so they need network access.

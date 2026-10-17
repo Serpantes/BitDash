@@ -1,15 +1,10 @@
-/**
- * Skill leveling math on top of BitJita `/static/experience/levels.json`
- * ([{ level, xp }] — cumulative XP needed to reach each level, 1..120).
- * Each level costs ~11.6% more XP than the previous one, so level progress
- * and XP progress towards 100 diverge a lot (level 90 ≈ 33% of the XP).
- */
+import { formatNumber, t } from './i18n'
 
 export const SKILL_TARGET_LEVEL = 100
 
 export const SKILL_CATEGORIES = [
-  { id: 'profession', label: 'Профессии' },
-  { id: 'adventure', label: 'Приключения' },
+  { id: 'profession', get label() { return t('skillCategories.profession') } },
+  { id: 'adventure', get label() { return t('skillCategories.adventure') } },
 ]
 
 const SKILL_GLYPHS = {
@@ -39,7 +34,6 @@ export function skillGlyph(skillId) {
   return SKILL_GLYPHS[Number(skillId)] ?? '★'
 }
 
-/** levels.json rows → cumulative XP thresholds, index = level - 1. */
 export function parseLevelTable(rows) {
   if (!Array.isArray(rows)) return null
   const thresholds = rows
@@ -87,12 +81,10 @@ export function skillProgress(table, rawXp, target = SKILL_TARGET_LEVEL) {
     targetPct: targetXp > 0 ? Math.min(100, (xp / targetXp) * 100) : 100,
     toTarget: Math.max(0, targetXp - xp),
     reachedTarget: level >= targetLevel,
-    // Fractional level, for placing the player on the curve.
     position: isMax ? level : level + levelPct / 100,
   }
 }
 
-/** Level marks on the XP-to-target bar (80 / 90 / 95 sit at 11% / 33% / 58%). */
 export function targetPathTicks(table, targetLevel) {
   const targetXp = table[targetLevel - 1]
   return PATH_TICK_LEVELS
@@ -100,7 +92,6 @@ export function targetPathTicks(table, targetLevel) {
     .map((level) => ({ level, pct: (table[level - 1] / targetXp) * 100 }))
 }
 
-/** Shape of the curve in words: per-level growth and how few top levels hold half the XP. */
 export function curveFacts(table, targetLevel) {
   const targetXp = table[targetLevel - 1]
   const lastStep = targetXp - table[targetLevel - 2]
@@ -123,10 +114,6 @@ function niceStep(max, maxTicks) {
   return step ?? 10 * magnitude
 }
 
-/**
- * Geometry for the cumulative-XP curve (x = level, y = total XP), in viewBox units.
- * Past the target the domain extends to the level cap.
- */
 export function skillCurveGeometry(table, progress, box) {
   const { width, height, left, right, top, bottom } = box
   const domainMax = progress.reachedTarget ? table.length : progress.targetLevel
@@ -183,10 +170,9 @@ export function formatXpCompact(value) {
   if (abs >= 1e9) return `${trim((n / 1e9).toFixed(2))}B`
   if (abs >= 1e6) return `${trim((n / 1e6).toFixed(1))}M`
   if (abs >= 1e4) return `${trim((n / 1e3).toFixed(1))}K`
-  return Math.round(n).toLocaleString('ru-RU')
+  return formatNumber(Math.round(n))
 }
 
-/** Three significant digits (299K, 47.7K, 1.23M) — for tight tiles. */
 export function formatXpShort(value) {
   const n = Number(value) || 0
   const abs = Math.abs(n)

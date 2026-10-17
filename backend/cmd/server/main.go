@@ -74,6 +74,7 @@ func main() {
 		log.Fatalf("item name store: %v", err)
 	}
 	itemNamesHandler := delivery.NewItemNamesHandler(bitjitaDataCache, itemNameStore)
+	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 10*time.Minute)
 
 	http.HandleFunc("/api/data", handler)
 	http.HandleFunc("/api/health", delivery.NewHealthHandler())
@@ -82,6 +83,7 @@ func main() {
 	http.HandleFunc("/api/bitjita/", bitjitaProxyHandler)
 	http.HandleFunc("/api/bitjita-icon", bitjitaIconHandler)
 	http.HandleFunc("/api/item-names", itemNamesHandler)
+	http.HandleFunc("/api/market-catalog", delivery.NewMarketCatalogHandler(marketCatalog))
 	http.HandleFunc("/api/xp-history/", delivery.NewXPHistoryHandler(xpHistory))
 	http.Handle("/map-embed/_app/", delivery.NewBitcraftMapAssetProxyHandler())
 	http.Handle("/map-embed/", delivery.NewBitcraftMapEmbedHandler())

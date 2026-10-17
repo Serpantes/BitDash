@@ -2,13 +2,13 @@
   <div class="player-inventory">
     <div class="card search-card">
       <form @submit.prevent="searchPlayer" class="search-form">
-        <input v-model="query" type="text" placeholder="Введи имя персонажа..." class="search-input" :disabled="searching" />
-        <button type="submit" :disabled="searching || !query.trim()" class="search-btn">{{ searching ? 'Поиск...' : 'Найти' }}</button>
+        <input v-model="query" type="text" :placeholder="t('inventoryPage.searchPlaceholder')" class="search-input" :disabled="searching" />
+        <button type="submit" :disabled="searching || !query.trim()" class="search-btn">{{ searching ? t('common.searching') : t('inventoryPage.find') }}</button>
       </form>
       <ul v-if="results.length > 0 && !selectedPlayer" class="results-list">
         <li v-for="p in results" :key="p.entityId" @click="selectPlayer(p)" class="result-item">
           <span class="player-name">{{ p.username }}</span>
-          <span class="player-meta">{{ p.signedIn ? 'онлайн' : 'офлайн' }}</span>
+          <span class="player-meta">{{ p.signedIn ? t('common.online') : t('common.offline') }}</span>
         </li>
       </ul>
       <div v-if="searchError" class="error-msg">{{ searchError }}</div>
@@ -19,30 +19,30 @@
         <div>
           <span class="player-title">{{ selectedPlayer.username }}</span>
           <span class="player-online" :class="selectedPlayer.signedIn ? 'online' : 'offline'">
-            {{ selectedPlayer.signedIn ? 'онлайн' : 'офлайн' }}
+            {{ selectedPlayer.signedIn ? t('common.online') : t('common.offline') }}
           </span>
         </div>
-        <button class="reset-btn" @click="reset">✕ Сменить</button>
+        <button class="reset-btn" @click="reset">✕ {{ t('inventoryPage.change') }}</button>
       </div>
 
-      <div v-if="invLoading" class="card placeholder">Загрузка инвентарей...</div>
+      <div v-if="invLoading" class="card placeholder">{{ t('wizard.loadingInventories') }}</div>
       <div v-else-if="invError" class="card error-msg">{{ invError }}</div>
       <template v-else>
         <div v-for="inv in inventories" :key="inv.entityId" class="card inv-card">
           <div class="inv-header">
             <span class="inv-name">{{ inv.inventoryName }}</span>
-            <span v-if="inv._isHousing" class="inv-house">дом</span>
+            <span v-if="inv._isHousing" class="inv-house">{{ t('inventoryPage.house') }}</span>
             <span v-if="inv.regionId" class="inv-region">R{{ inv.regionId }}</span>
             <span v-if="inv.claimName" class="inv-claim">{{ inv.claimName }}</span>
             <button
               class="pin-btn"
               :class="{ pinned: isPinned(inv.entityId) }"
               @click="togglePin(inv)"
-              :title="isPinned(inv.entityId) ? 'Открепить' : 'Закрепить на дашборде'"
-            >{{ isPinned(inv.entityId) ? 'Закреплён' : 'Закрепить' }}</button>
+              :title="isPinned(inv.entityId) ? t('dashboard.unpin') : t('inventoryPage.pinTitle')"
+            >{{ isPinned(inv.entityId) ? t('inventoryPage.pinned') : t('inventoryPage.pin') }}</button>
           </div>
 
-          <div v-if="!hasInventoryGrid(inv)" class="empty-inv">пусто</div>
+          <div v-if="!hasInventoryGrid(inv)" class="empty-inv">{{ t('common.empty') }}</div>
           <div v-else class="inventory-board">
             <div class="inventory-grid" :style="inventoryGridStyle(inv)">
               <div
@@ -66,7 +66,7 @@
             </div>
           </div>
         </div>
-        <div v-if="inventories.length === 0" class="card placeholder">Нет данных об инвентарях</div>
+        <div v-if="inventories.length === 0" class="card placeholder">{{ t('inventoryPage.noInventories') }}</div>
       </template>
     </template>
   </div>
@@ -75,6 +75,7 @@
 <script>
 import { ref } from 'vue'
 import { fetchBitjita } from '../api'
+import { formatNumber, t } from '../i18n'
 import { usePinned } from '../composables/usePinned'
 import { useItemCache } from '../composables/useItemCache'
 import ItemCard from './ItemCard.vue'
@@ -104,7 +105,7 @@ export default {
       try {
         const res = await fetchBitjita('/players', { q })
         results.value = res.players ?? []
-        if (results.value.length === 0) searchError.value = 'Игрок не найден'
+        if (results.value.length === 0) searchError.value = t('wizard.playerNotFound')
       } catch (e) {
         searchError.value = e.message
       } finally {
@@ -224,7 +225,7 @@ export default {
     function inventoryGridStyle(inv) { return { '--inventory-cols': optimalGridColumns(displayInventorySlots(inv)) } }
     function hasInventoryGrid(inv) { return itemCapacity(inv) > 0 || cargoCapacity(inv) > 0 || inventorySlots(inv).length > 0 }
     function itemMeta(contents) { return resolveItem(contents) }
-    function quantityDisplay(quantity) { return Number(quantity ?? 0).toLocaleString('ru-RU') }
+    function quantityDisplay(quantity) { return formatNumber(quantity ?? 0) }
     function togglePin(inv) { isPinned(inv.entityId) ? unpin(inv.entityId) : pin(selectedPlayer.value, inv) }
 
     return {

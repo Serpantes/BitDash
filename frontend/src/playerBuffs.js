@@ -1,3 +1,5 @@
+import { t } from './i18n'
+
 export const FOOD_BUFF_TYPE = 'Food Buffs'
 
 export function isFoodBuffType(buff) {
@@ -11,9 +13,9 @@ export function formatBuffTimeRemaining(seconds) {
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
   const secs = total % 60
-  if (hours > 0) return `${hours}ч ${minutes}м`
-  if (minutes > 0) return `${minutes}м ${secs}с`
-  return `${secs}с`
+  if (hours > 0) return t('units.buffHm', { h: hours, m: minutes })
+  if (minutes > 0) return t('units.buffMs', { m: minutes, s: secs })
+  return t('units.buffS', { s: secs })
 }
 
 export function normalizeActiveBuff(buff) {

@@ -16,7 +16,6 @@ type proxyHandler struct {
 func NewProxyHandler(f usecase.Fetcher) func(http.ResponseWriter, *http.Request) {
 	h := &proxyHandler{fetcher: f}
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Allow CORS for local frontend during dev
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -32,7 +31,6 @@ func NewProxyHandler(f usecase.Fetcher) func(http.ResponseWriter, *http.Request)
 		}
 		defer resp.Body.Close()
 
-		// forward headers
 		for k, vals := range resp.Header {
 			for _, v := range vals {
 				w.Header().Add(k, v)
@@ -43,7 +41,6 @@ func NewProxyHandler(f usecase.Fetcher) func(http.ResponseWriter, *http.Request)
 	}
 }
 
-// NewHealthHandler returns a simple health endpoint
 func NewHealthHandler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
@@ -58,7 +55,6 @@ func NewHealthHandler() func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-// NewPingHandler echoes a pong with timestamp and optional message
 func NewPingHandler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")

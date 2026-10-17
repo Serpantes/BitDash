@@ -8,14 +8,15 @@
     @click="check"
   >
     <span class="bitjita-status-dot" />
-    <span class="bitjita-status-label">{{ label }}</span>
-    <span v-if="latency != null" class="bitjita-status-ms">{{ latency }} ms</span>
+    <span>BitJita</span>
+    <span class="bitjita-status-value">{{ valueLabel }}</span>
   </button>
 </template>
 
 <script>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { pingBitjita } from '../api'
+import { t } from '../i18n'
 
 const SLOW_MS = 3000
 const INTERVAL_MS = 30000
@@ -42,26 +43,24 @@ export default {
     }
 
     const statusClass = computed(() => {
-      if (checking.value) return 'bitjita-status--checking'
+      if (checking.value && latency.value == null) return 'bitjita-status--checking'
       if (!ok.value) return 'bitjita-status--down'
       if (latency.value != null && latency.value >= SLOW_MS) return 'bitjita-status--slow'
       return 'bitjita-status--ok'
     })
 
-    const label = computed(() => {
-      if (checking.value) return 'BitJita · проверка…'
-      if (!ok.value) return 'BitJita · недоступен'
-      if (latency.value != null && latency.value >= SLOW_MS) return 'BitJita · медленно'
-      return 'BitJita · доступен'
+    const valueLabel = computed(() => {
+      if (checking.value && latency.value == null) return '…'
+      if (!ok.value) return t('status.down')
+      return `${latency.value} ms`
     })
 
     const tooltip = computed(() => {
-      if (checking.value) return 'Проверка доступности BitJita API…'
-      const parts = ['BitJita API (/api/status)']
-      if (latency.value != null) parts.push(`время ответа: ${latency.value} ms`)
+      const parts = ['BitJita API']
+      if (latency.value != null) parts.push(t('status.response', { ms: latency.value }))
       if (statusCode.value != null) parts.push(`HTTP ${statusCode.value}`)
-      if (error.value) parts.push(`ошибка: ${error.value}`)
-      parts.push('Нажмите для повторной проверки')
+      if (error.value) parts.push(t('status.error', { error: error.value }))
+      parts.push(t('status.clickToCheck'))
       return parts.join(' · ')
     })
 
@@ -72,7 +71,7 @@ export default {
 
     onUnmounted(() => clearInterval(timer))
 
-    return { checking, latency, label, statusClass, tooltip, check }
+    return { checking, valueLabel, statusClass, tooltip, check }
   },
 }
 </script>
@@ -81,58 +80,35 @@ export default {
 .bitjita-status {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--frame-soft);
+  border-radius: 3px;
+  background: rgba(20, 18, 30, 0.35);
+  color: var(--text-soft);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
-.bitjita-status:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text);
-}
+.bitjita-status:hover:not(:disabled) { border-color: var(--frame); color: var(--text); }
 .bitjita-status:disabled { cursor: default; }
 .bitjita-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  width: 7px;
+  height: 7px;
   flex-shrink: 0;
+  transform: rotate(45deg);
   background: var(--muted);
 }
-.bitjita-status--checking .bitjita-status-dot {
-  background: var(--muted);
-  animation: bitjita-pulse 1.2s ease-in-out infinite;
-}
-.bitjita-status--ok {
-  border-color: rgba(117, 224, 167, 0.35);
-  color: var(--success);
-}
+.bitjita-status-value { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 600; }
+.bitjita-status--checking .bitjita-status-dot { animation: bitjita-pulse 1.2s ease-in-out infinite; }
 .bitjita-status--ok .bitjita-status-dot { background: var(--success); }
-.bitjita-status--slow {
-  border-color: rgba(248, 198, 109, 0.35);
-  color: var(--warning);
-}
 .bitjita-status--slow .bitjita-status-dot { background: var(--warning); }
-.bitjita-status--down {
-  border-color: rgba(255, 138, 154, 0.35);
-  color: var(--danger);
-}
+.bitjita-status--slow .bitjita-status-value { color: var(--warning); }
 .bitjita-status--down .bitjita-status-dot { background: var(--danger); }
-.bitjita-status-label { white-space: nowrap; }
-.bitjita-status-ms {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.85;
-}
+.bitjita-status--down .bitjita-status-value { color: var(--danger); }
 @keyframes bitjita-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.85); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 </style>

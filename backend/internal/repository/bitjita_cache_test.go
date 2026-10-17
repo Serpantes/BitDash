@@ -1,9 +1,15 @@
 package repository
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"bitdash/backend/internal/cache"
 )
 
 func TestFileCacheSetGet(t *testing.T) {
@@ -65,5 +71,35 @@ func TestIconAssetPathCandidatesKeepsGeneratedIconsPathFirst(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("candidate %d: expected %q, got %q", i, want[i], got[i])
 		}
+	}
+}
+
+func TestBitjitaGetAPIFreshBypassesLiveCache(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		fmt.Fprintf(w, `{"hit":%d}`, hits)
+	}))
+	defer server.Close()
+
+	b, err := NewBitjitaCache(server.URL, t.TempDir(), cache.New(time.Minute))
+	if err != nil {
+		t.Fatalf("NewBitjitaCache: %v", err)
+	}
+
+	first, _, _, _ := b.GetAPI("/leaderboard/skills", "sortBy=2")
+	cached, _, status, _ := b.GetAPI("/leaderboard/skills", "sortBy=2")
+	if status != "HIT" || string(cached) != string(first) || hits != 1 {
+		t.Fatalf("expected cached response, got %q status %q after %d hits", cached, status, hits)
+	}
+
+	fresh, _, status, _ := b.GetAPIFresh("/leaderboard/skills", "sortBy=2")
+	if status != "MISS" || string(fresh) != `{"hit":2}` {
+		t.Fatalf("expected upstream response, got %q status %q", fresh, status)
+	}
+
+	after, _, _, _ := b.GetAPI("/leaderboard/skills", "sortBy=2")
+	if string(after) != `{"hit":2}` || hits != 2 {
+		t.Fatalf("expected refreshed cache, got %q after %d hits", after, hits)
 	}
 }

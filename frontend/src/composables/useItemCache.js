@@ -125,7 +125,6 @@ export function useItemCache() {
         cache[key] = normalizeMeta(meta, type) ?? { name: String(meta), type }
       }
     } catch {
-      // Non-fatal; UI will show #id fallbacks.
     }
   }
 

@@ -34,7 +34,9 @@ export function itemInitials(name) {
 
 export function iconUrl(iconAssetName) {
   if (!iconAssetName) return null
-  const params = new URLSearchParams({ iconAssetName, v: ICON_CACHE_VERSION })
+  const asset = String(iconAssetName).replace(/\[[^\]]*\]\s*$/, '')
+  if (!asset) return null
+  const params = new URLSearchParams({ iconAssetName: asset, v: ICON_CACHE_VERSION })
   return `/api/bitjita-icon?${params.toString()}`
 }
 

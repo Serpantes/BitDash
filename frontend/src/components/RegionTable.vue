@@ -1,40 +1,34 @@
 <template>
-  <div class="card region-table">
-    <div class="card-header">
-      <span class="card-title">Регионы</span>
-      <span class="refresh-btn" @click="load" title="Обновить">&#x21bb;</span>
+  <section class="bc-panel">
+    <header class="bc-panel-head">
+      <h2 class="bc-title">{{ t('server.regions') }}</h2>
+      <span class="bc-ornament"></span>
+    </header>
+    <div class="bc-panel-body">
+      <div v-if="loading" class="bc-muted-note">{{ t('common.loading') }}</div>
+      <div v-else-if="error" class="bc-error">{{ error }}</div>
+      <div v-else-if="regions.length === 0" class="bc-muted-note">{{ t('common.noDataCap') }}</div>
+      <ul v-else class="regions">
+        <li
+          v-for="r in sorted"
+          :key="r.regionId ?? r.regionName"
+          class="region"
+          :class="{ 'region--off': r.active === false }"
+        >
+          <span class="region-name">{{ r.regionName ?? '—' }}<span v-if="r.regionId" class="region-id">R{{ r.regionId }}</span></span>
+          <span class="region-bar" aria-hidden="true">
+            <span class="region-fill" :style="{ width: `${barPct(r)}%` }"></span>
+          </span>
+          <span class="region-count">
+            <template v-if="r.active === false">{{ t('common.offline') }}</template>
+            <template v-else>
+              {{ r.signedInPlayers ?? 0 }}<span v-if="r.playersInQueue > 0" class="region-queue" :title="t('server.queueTitle')"> +{{ r.playersInQueue }}</span>
+            </template>
+          </span>
+        </li>
+      </ul>
     </div>
-
-    <div v-if="loading" class="placeholder">Загрузка...</div>
-    <div v-else-if="error" class="error-msg">{{ error }}</div>
-    <div v-else-if="regions.length === 0" class="placeholder">Нет данных</div>
-    <div v-else class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Регион</th>
-            <th>Игроков</th>
-            <th>Очередь</th>
-            <th>Статус</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="r in sorted" :key="r.regionId ?? r.regionName">
-            <td class="region-name">{{ r.regionName ?? '—' }}<span v-if="r.regionId" class="region-id"> (R{{ r.regionId }})</span></td>
-            <td class="num">{{ r.signedInPlayers ?? '—' }}</td>
-            <td class="num">{{ r.playersInQueue ?? 0 }}</td>
-            <td>
-              <span class="badge" :class="r.active ? 'badge-ok' : 'badge-fail'">
-                {{ r.active ? 'Online' : 'Offline' }}
-              </span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div v-if="updatedAt" class="updated-at">Обновлено: {{ updatedAt }}</div>
-  </div>
+  </section>
 </template>
 
 <script>
@@ -47,15 +41,12 @@ export default {
     const rawData = ref(null)
     const loading = ref(true)
     const error = ref(null)
-    const updatedAt = ref(null)
     let timer = null
 
     async function load() {
       try {
         error.value = null
-        const res = await fetchBitjita('/regions/status')
-        rawData.value = res
-        updatedAt.value = new Date().toLocaleTimeString('ru-RU')
+        rawData.value = await fetchBitjita('/regions/status')
       } catch (e) {
         error.value = e.message
       } finally {
@@ -74,6 +65,11 @@ export default {
     const sorted = computed(() =>
       [...regions.value].sort((a, b) => (b.signedInPlayers ?? 0) - (a.signedInPlayers ?? 0))
     )
+    const maxPlayers = computed(() => Math.max(1, ...regions.value.map((r) => r.signedInPlayers ?? 0)))
+
+    function barPct(region) {
+      return ((region.signedInPlayers ?? 0) / maxPlayers.value) * 100
+    }
 
     onMounted(() => {
       load()
@@ -82,60 +78,28 @@ export default {
 
     onUnmounted(() => clearInterval(timer))
 
-    return { loading, error, regions, sorted, updatedAt, load }
-  }
+    return { loading, error, regions, sorted, barPct }
+  },
 }
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
+.regions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.region {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 56px;
   align-items: center;
-  margin-bottom: 12px;
-}
-.card-title { font-size: 15px; font-weight: 600; color: var(--text); }
-.refresh-btn {
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--muted);
-  user-select: none;
-  transition: color 0.15s;
-}
-.refresh-btn:hover { color: var(--accent); }
-.table-wrap { overflow-x: auto; }
-table {
-  width: 100%;
-  border-collapse: collapse;
+  gap: 12px;
+  min-height: 32px;
+  border-bottom: 1px solid rgba(233, 223, 196, 0.07);
   font-size: 13px;
 }
-th {
-  text-align: left;
-  padding: 6px 10px;
-  color: var(--muted);
-  font-weight: 500;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-td {
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(106, 104, 126, 0.32);
-  color: var(--text-soft);
-}
-tr:last-child td { border-bottom: none; }
-.region-name { font-weight: 500; color: var(--text); }
-.region-id { font-weight: 400; color: var(--muted); font-size: 12px; }
-.num { font-variant-numeric: tabular-nums; }
-.badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-.badge-ok { background: rgba(117, 224, 167, 0.16); color: var(--success); }
-.badge-fail { background: rgba(255, 138, 154, 0.16); color: var(--danger); }
-.placeholder, .error-msg { font-size: 14px; color: var(--muted); padding: 8px 0; }
-.error-msg { color: var(--danger); }
-.updated-at { font-size: 11px; color: var(--muted); margin-top: 10px; }
+.region:last-child { border-bottom: none; }
+.region-name { min-width: 0; color: var(--text); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region-id { margin-left: 7px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.region-bar { height: 6px; border-radius: 3px; background: rgba(20, 18, 30, 0.5); overflow: hidden; }
+.region-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.region-count { text-align: right; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.region-queue { color: var(--warning); }
+.region--off .region-name, .region--off .region-count { color: var(--muted); font-weight: 600; }
 </style>

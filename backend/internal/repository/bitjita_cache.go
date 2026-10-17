@@ -14,8 +14,6 @@ import (
 
 const bitjitaAppID = "BitDash"
 
-// BitjitaCache fetches BitJita API data with permanent disk cache for static assets
-// and a short-lived memory cache for live endpoints.
 type BitjitaCache struct {
 	baseURL    string
 	client     *http.Client
@@ -42,7 +40,6 @@ func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*Bitji
 	}, nil
 }
 
-// BitjitaCachePolicy reports whether a path uses permanent disk cache or live memory cache.
 func BitjitaCachePolicy(path, query string) string {
 	return bitjitaCachePolicy(path, query)
 }
@@ -63,8 +60,6 @@ func bitjitaCachePolicy(path, query string) string {
 	return "live"
 }
 
-// isStaticPath reports BitJita static game data (e.g. /static/experience/levels.json),
-// served from the site root rather than under /api.
 func isStaticPath(path string) bool {
 	return strings.HasPrefix(path, "/static/")
 }
@@ -110,8 +105,15 @@ func apiMemoryKey(path, query string) string {
 	return path + "?" + query
 }
 
-// GetAPI returns a cached or freshly fetched BitJita /api/* (or /static/*) response body.
 func (b *BitjitaCache) GetAPI(path, query string) (body []byte, status int, cacheStatus string, err error) {
+	return b.getAPI(path, query, false)
+}
+
+func (b *BitjitaCache) GetAPIFresh(path, query string) (body []byte, status int, cacheStatus string, err error) {
+	return b.getAPI(path, query, true)
+}
+
+func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, status int, cacheStatus string, err error) {
 	if path == "" {
 		path = "/"
 	}
@@ -127,10 +129,28 @@ func (b *BitjitaCache) GetAPI(path, query string) (body []byte, status int, cach
 		if data, ok := b.apiFiles.Get(diskKey); ok {
 			return data, http.StatusOK, "DISK-HIT", nil
 		}
-	} else if data, ok := b.liveMemory.Get(memKey); ok {
-		return data, http.StatusOK, "HIT", nil
+	} else if !fresh {
+		if data, ok := b.liveMemory.Get(memKey); ok {
+			return data, http.StatusOK, "HIT", nil
+		}
 	}
 
+	body, status, err = b.fetchUpstream(path, query)
+	if err != nil {
+		return nil, status, "", err
+	}
+
+	if status >= 200 && status < 300 {
+		if policy == "permanent" {
+			_ = b.apiFiles.Set(diskKey, body)
+		} else {
+			b.liveMemory.Set(memKey, body)
+		}
+	}
+	return body, status, "MISS", nil
+}
+
+func (b *BitjitaCache) fetchUpstream(path, query string) ([]byte, int, error) {
 	targetURL := b.baseURL + bitjitaUpstreamPath(path)
 	if query != "" {
 		targetURL += "?" + query
@@ -138,32 +158,23 @@ func (b *BitjitaCache) GetAPI(path, query string) (body []byte, status int, cach
 
 	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, err
 	}
 	req.Header.Set("x-app-identifier", bitjitaAppID)
 
 	resp, err := b.client.Do(req)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	body, err = io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.StatusCode, "", err
+		return nil, resp.StatusCode, err
 	}
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if policy == "permanent" {
-			_ = b.apiFiles.Set(diskKey, body)
-		} else {
-			b.liveMemory.Set(memKey, body)
-		}
-	}
-	return body, resp.StatusCode, "MISS", nil
+	return body, resp.StatusCode, nil
 }
 
-// PostAPI proxies a POST to BitJita (no disk cache).
 func (b *BitjitaCache) PostAPI(path string, query string, jsonBody []byte) ([]byte, int, error) {
 	if path == "" {
 		path = "/"
@@ -209,7 +220,6 @@ func (b *BitjitaCache) PostAPI(path string, query string, jsonBody []byte) ([]by
 	return body, resp.StatusCode, nil
 }
 
-// GetIcon returns cached or fetched icon bytes.
 func (b *BitjitaCache) GetIcon(iconAssetName string) ([]byte, string, error) {
 	key := "icon:" + strings.TrimLeft(strings.TrimSpace(iconAssetName), "/")
 	if data, ok := b.iconFiles.Get(key); ok {

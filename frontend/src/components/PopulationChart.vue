@@ -1,12 +1,7 @@
 <template>
-  <div class="card population-chart">
-    <div class="card-header">
-      <span class="card-title">Онлайн за 24 часа</span>
-      <span class="refresh-btn" @click="load" title="Обновить">&#x21bb;</span>
-    </div>
-
-    <div v-if="loading" class="placeholder">Загрузка...</div>
-    <div v-else-if="error" class="error-msg">{{ error }}</div>
+  <div class="population-chart">
+    <div v-if="loading" class="bc-muted-note">{{ t('common.loading') }}</div>
+    <div v-else-if="error" class="bc-error">{{ error }}</div>
     <div v-else class="chart-wrap">
       <canvas ref="canvas"></canvas>
     </div>
@@ -16,6 +11,7 @@
 <script>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { fetchBitjita } from '../api'
+import { intlLocale, locale, t } from '../i18n'
 
 export default {
   name: 'PopulationChart',
@@ -45,14 +41,13 @@ export default {
     }
 
     function parseData(res) {
-      // Real response: { count, buckets: [{ bucket (ISO string), totalSignedIn, ... }] }
       if (!res) return { labels: [], values: [] }
       const buckets = Array.isArray(res.buckets) ? res.buckets : (Array.isArray(res) ? res : [])
       if (buckets.length === 0) return { labels: [], values: [] }
       const labels = buckets.map((d) => {
         const ts = d.bucket ?? d.time ?? d.timestamp
         if (!ts) return ''
-        return new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+        return new Date(ts).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' })
       })
       const values = buckets.map((d) => d.totalSignedIn ?? d.count ?? d.online ?? 0)
       return { labels, values }
@@ -64,29 +59,41 @@ export default {
       const { labels, values } = parseData(chartData.value)
       if (values.length === 0) return
       const css = getComputedStyle(document.documentElement)
-      const accent = css.getPropertyValue('--accent').trim() || '#8aa4ff'
-      const textSoft = css.getPropertyValue('--text-soft').trim() || '#d7d3ea'
-      const muted = css.getPropertyValue('--muted').trim() || '#a7a1bd'
-      const border = css.getPropertyValue('--border').trim() || '#45435c'
+      const token = (name, fallback) => css.getPropertyValue(name).trim() || fallback
+      const accent = token('--accent', '#5ea6dc')
+      const text = token('--text', '#f2ebd9')
+      const muted = token('--muted', '#a39d98')
+      const border = token('--border', '#45424f')
+      const cream = token('--cream', '#e9dfc4')
+      const font = { family: token('--font-body', 'Nunito, sans-serif'), size: 11, weight: 600 }
 
       if (chartInstance) {
         chartInstance.destroy()
         chartInstance = null
       }
 
-      chartInstance = new window.Chart(canvas.value.getContext('2d'), {
+      const ctx = canvas.value.getContext('2d')
+      const fill = ctx.createLinearGradient(0, 0, 0, canvas.value.clientHeight || 240)
+      fill.addColorStop(0, 'rgba(94, 166, 220, 0.28)')
+      fill.addColorStop(1, 'rgba(94, 166, 220, 0)')
+
+      chartInstance = new window.Chart(ctx, {
         type: 'line',
         data: {
           labels,
           datasets: [
             {
-              label: 'Игроков онлайн',
+              label: t('server.playersOnline'),
               data: values,
               borderColor: accent,
-              backgroundColor: 'rgba(138, 164, 255, 0.15)',
+              backgroundColor: fill,
               borderWidth: 2,
-              pointRadius: 2,
-              tension: 0.3,
+              pointRadius: 0,
+              pointHoverRadius: 4,
+              pointHoverBackgroundColor: cream,
+              pointHoverBorderColor: '#2a2737',
+              pointHoverBorderWidth: 2,
+              tension: 0.35,
               fill: true,
             },
           ],
@@ -94,35 +101,42 @@ export default {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { display: false },
             tooltip: {
-              titleColor: textSoft,
-              bodyColor: textSoft,
-              backgroundColor: '#252437',
-              borderColor: border,
+              displayColors: false,
+              titleColor: muted,
+              bodyColor: text,
+              titleFont: font,
+              bodyFont: { ...font, size: 13, weight: 800 },
+              backgroundColor: 'rgba(24, 22, 34, 0.96)',
+              borderColor: 'rgba(233, 223, 196, 0.55)',
               borderWidth: 1,
+              padding: 8,
               callbacks: {
-                label: (ctx) => ` ${ctx.parsed.y} игроков`,
+                label: (item) => t('server.playersCount', { n: item.parsed.y }),
               },
             },
           },
           scales: {
             x: {
-              ticks: { maxTicksLimit: 8, font: { size: 11 }, color: muted },
-              grid: { display: false, color: border },
+              ticks: { maxTicksLimit: 8, font, color: muted, maxRotation: 0 },
+              grid: { display: false },
+              border: { color: border },
             },
             y: {
               beginAtZero: false,
-              ticks: { font: { size: 11 }, color: muted },
+              ticks: { font, color: muted, maxTicksLimit: 5 },
               grid: { color: border },
+              border: { display: false },
             },
           },
         },
       })
     }
 
-    watch(chartData, async () => {
+    watch([chartData, locale], async () => {
       await nextTick()
       renderChart()
     })
@@ -143,23 +157,6 @@ export default {
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-.card-title { font-size: 15px; font-weight: 600; color: var(--text); }
-.refresh-btn {
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--muted);
-  user-select: none;
-  transition: color 0.15s;
-}
-.refresh-btn:hover { color: var(--accent); }
-.chart-wrap { position: relative; height: 220px; }
+.chart-wrap { position: relative; height: 260px; }
 .chart-wrap canvas { width: 100% !important; height: 100% !important; }
-.placeholder, .error-msg { font-size: 14px; color: var(--muted); padding: 8px 0; }
-.error-msg { color: var(--danger); }
 </style>

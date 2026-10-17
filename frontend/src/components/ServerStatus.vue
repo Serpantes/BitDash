@@ -1,58 +1,47 @@
 <template>
-  <div class="card server-status">
-    <div class="card-header">
-      <span class="card-title">Статус серверов</span>
-      <span class="refresh-btn" @click="load" title="Обновить">&#x21bb;</span>
-    </div>
-
-    <div v-if="loading" class="placeholder">Загрузка...</div>
-    <div v-else-if="error" class="error-msg">{{ error }}</div>
-    <div v-else class="stats-row">
-      <div class="stat">
-        <div class="stat-value">{{ totalOnline }}</div>
-        <div class="stat-label">Игроков онлайн</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">{{ regionCount }}</div>
-        <div class="stat-label">Регионов</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">{{ inQueue }}</div>
-        <div class="stat-label">В очереди</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">
-          <span class="badge" :class="serverOnline ? 'badge-ok' : 'badge-fail'">
-            {{ serverOnline ? 'Online' : 'Offline' }}
-          </span>
+  <section class="bc-panel">
+    <header class="bc-panel-head">
+      <h2 class="bc-title">{{ t('server.online') }}</h2>
+      <span class="bc-ornament"></span>
+    </header>
+    <div class="bc-panel-body online-body">
+      <div v-if="loading" class="bc-muted-note">{{ t('common.loading') }}</div>
+      <div v-else-if="error" class="bc-error">{{ error }}</div>
+      <div v-else class="online-stats">
+        <div class="online-stat">
+          <span class="online-value">{{ totalOnline }}</span>
+          <span class="online-label">{{ t('server.signedIn') }}</span>
         </div>
-        <div class="stat-label">Сервер</div>
+        <div class="online-stat" :class="{ 'online-stat--queue': inQueue > 0 }">
+          <span class="online-value online-value--small">{{ inQueue }}</span>
+          <span class="online-label">{{ t('server.inQueue') }}</span>
+        </div>
       </div>
+      <h3 class="bc-section">{{ t('server.last24h') }}</h3>
+      <PopulationChart />
     </div>
-
-    <div v-if="updatedAt" class="updated-at">Обновлено: {{ updatedAt }}</div>
-  </div>
+  </section>
 </template>
 
 <script>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { fetchBitjita } from '../api'
+import { formatNumber } from '../i18n'
+import PopulationChart from './PopulationChart.vue'
 
 export default {
   name: 'ServerStatus',
+  components: { PopulationChart },
   setup() {
     const data = ref(null)
     const loading = ref(true)
     const error = ref(null)
-    const updatedAt = ref(null)
     let timer = null
 
     async function load() {
       try {
         error.value = null
-        const res = await fetchBitjita('/status')
-        data.value = res
-        updatedAt.value = new Date().toLocaleTimeString('ru-RU')
+        data.value = await fetchBitjita('/status')
       } catch (e) {
         error.value = e.message
       } finally {
@@ -60,25 +49,8 @@ export default {
       }
     }
 
-    const totalOnline = computed(() => {
-      if (!data.value) return '—'
-      return data.value.totalSignedIn ?? '—'
-    })
-
-    const inQueue = computed(() => {
-      if (!data.value) return '—'
-      return data.value.totalInQueue ?? 0
-    })
-
-    const regionCount = computed(() => {
-      if (!data.value) return '—'
-      return data.value.count ?? '—'
-    })
-
-    const serverOnline = computed(() => {
-      if (!data.value) return false
-      return (data.value.count ?? 0) > 0
-    })
+    const totalOnline = computed(() => formatNumber(data.value?.totalSignedIn ?? 0))
+    const inQueue = computed(() => data.value?.totalInQueue ?? 0)
 
     onMounted(() => {
       load()
@@ -87,45 +59,17 @@ export default {
 
     onUnmounted(() => clearInterval(timer))
 
-    return { loading, error, updatedAt, totalOnline, inQueue, regionCount, serverOnline, load }
-  }
+    return { loading, error, totalOnline, inQueue }
+  },
 }
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.card-title { font-size: 15px; font-weight: 600; color: var(--text); }
-.refresh-btn {
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--muted);
-  user-select: none;
-  transition: color 0.15s;
-}
-.refresh-btn:hover { color: var(--accent); }
-.stats-row {
-  display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
-}
-.stat { flex: 1; min-width: 80px; }
-.stat-value { font-size: 28px; font-weight: 700; color: var(--text); }
-.stat-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.badge {
-  display: inline-block;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 12px;
-}
-.badge-ok { background: rgba(117, 224, 167, 0.16); color: var(--success); }
-.badge-fail { background: rgba(255, 138, 154, 0.16); color: var(--danger); }
-.placeholder, .error-msg { font-size: 14px; color: var(--muted); padding: 8px 0; }
-.error-msg { color: var(--danger); }
-.updated-at { font-size: 11px; color: var(--muted); margin-top: 12px; }
+.online-body { gap: 14px; }
+.online-stats { display: flex; align-items: flex-end; gap: 36px; }
+.online-stat { display: flex; align-items: baseline; gap: 8px; }
+.online-value { font-size: 44px; font-weight: 800; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.online-value--small { font-size: 24px; color: var(--text-soft); }
+.online-label { font-size: 13px; color: var(--muted); }
+.online-stat--queue .online-value { color: var(--warning); }
 </style>

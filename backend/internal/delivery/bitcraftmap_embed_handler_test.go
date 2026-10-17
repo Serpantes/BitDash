@@ -24,14 +24,19 @@ import("./_app/immutable/entry/app.js");
 </body>
 </html>`
 
-	out := transformBitcraftMapEmbedHTML(input, false)
-	miniOut := transformBitcraftMapEmbedHTML(input, true)
+	out := transformBitcraftMapEmbedHTML(input)
 
 	if strings.Contains(out, "Content-Security-Policy") {
 		t.Fatal("expected CSP meta removed")
 	}
-	if !strings.Contains(out, "bitdash-hide-map-ui") {
-		t.Fatal("expected hide UI style injected")
+	if !strings.Contains(out, `<script id="bitdash-map-bridge">`) {
+		t.Fatal("expected map bridge injected")
+	}
+	if strings.Index(out, "bitdash-map-bridge") > strings.Index(out, "</head>") {
+		t.Fatal("expected map bridge in <head>, before the app's modules")
+	}
+	if !strings.Contains(out, "addInitHook") || !strings.Contains(out, "postMessage") {
+		t.Fatal("expected bridge to hook Leaflet and talk over postMessage")
 	}
 	if !strings.Contains(out, "bitdash-map-fetch-patch") {
 		t.Fatal("expected fetch patch injected")
@@ -60,13 +65,7 @@ import("./_app/immutable/entry/app.js");
 	if strings.Contains(out, "cloudflareinsights.com/beacon") {
 		t.Fatal("expected cloudflare beacon removed")
 	}
-	if !strings.Contains(out, ".absolute.left-3.z-ui") {
-		t.Fatal("expected coords/time/reset selector in CSS")
-	}
-	if strings.Contains(out, "bitdash-mini-map-ui") {
-		t.Fatal("expected mini UI style only in mini mode")
-	}
-	if !strings.Contains(miniOut, "bitdash-mini-map-ui") {
-		t.Fatal("expected mini UI style in mini mode")
+	if !strings.Contains(out, ".relative.h-viewport > *:not(.z-map)") {
+		t.Fatal("expected the site's own UI hidden by the bridge")
 	}
 }
