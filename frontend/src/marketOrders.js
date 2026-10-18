@@ -31,17 +31,40 @@ export function marketPrices(stats, unitPrice) {
     const n = Number(value)
     return value != null && Number.isFinite(n) && n > 0 ? n : null
   }
-  const lowest = num(stats?.lowestSellPrice)
   const avg7 = num(stats?.vwap7d)
   const average = avg7 ?? num(stats?.vwap24h)
-  const pct = (base) => (base && unitPrice ? ((unitPrice - base) / base) * 100 : null)
   return {
-    lowest,
-    isLowest: lowest != null && unitPrice > 0 && unitPrice <= lowest,
-    lowestPct: pct(lowest),
     average,
     averageWindow: average == null ? null : avg7 != null ? '7d' : '24h',
-    averagePct: pct(average),
+    averagePct: average && unitPrice ? ((unitPrice - average) / average) * 100 : null,
+  }
+}
+
+export function marketBookKey(itemId, itemType) {
+  return `${itemTypeOf(itemType)}:${itemId}`
+}
+
+export function sellBook(orders) {
+  return (orders ?? []).map((order) => ({
+    price: Number(order.priceThreshold) || 0,
+    quantity: Number(order.quantity) || 0,
+    regionId: order.regionId != null ? String(order.regionId) : null,
+    ownerEntityId: order.ownerEntityId != null ? String(order.ownerEntityId) : null,
+    owner: order.ownerUsername ?? null,
+    claimName: order.claimName ?? null,
+  })).filter((order) => order.price > 0)
+}
+
+export function regionalSell(row, books, playerEntityId) {
+  const book = books?.[marketBookKey(row.good.id, row.good.itemType)]
+  if (!book || row.claim.regionId == null) return null
+  const rivals = book.filter((order) => order.regionId === row.claim.regionId && order.ownerEntityId !== String(playerEntityId))
+  const cheapest = rivals.reduce((best, order) => (!best || order.price < best.price ? order : best), null)
+  return {
+    lowest: cheapest?.price ?? null,
+    cheapest,
+    sellers: new Set(rivals.map((order) => order.ownerEntityId)).size,
+    quantity: rivals.reduce((sum, order) => sum + order.quantity, 0),
   }
 }
 

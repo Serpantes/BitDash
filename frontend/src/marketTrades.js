@@ -32,6 +32,7 @@ export function claimOf(row) {
     key: String(row?.claimEntityId ?? row?.claimName ?? ''),
     name: row?.claimName ?? null,
     regionName: row?.regionName ?? null,
+    regionId: row?.regionId != null ? String(row.regionId) : null,
     x: Number.isFinite(x) ? x : null,
     z: Number.isFinite(z) ? z : null,
   }

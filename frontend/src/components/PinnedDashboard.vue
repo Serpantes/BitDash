@@ -495,7 +495,7 @@ import { dedupePlannerSearchResults, normalizePlannerSearchEntry } from '../plan
 import { SKILL_CATEGORIES, formatXpShort, levelForXp, parseLevelTable, skillGlyph } from '../skillProgress'
 import { ACTIVE_DAYS, activeSkillPlayers, activeSkillRank, skillPlace } from '../skillLeaderboard'
 import { carriedCoins, collectRows, collectSummary } from '../marketTrades'
-import { FLAG_PCT, playerOrderRows } from '../marketOrders'
+import { FLAG_PCT, marketBookKey, playerOrderRows, sellBook } from '../marketOrders'
 import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpHistory'
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
@@ -512,6 +512,7 @@ const TILE_WIDTH_PX = 380
 const TILE_GAP_PX = 14
 const WIZARD_PREVIEW_MAX = 24
 const MARKET_TRADES_LIMIT = 100
+const MARKET_BOOK_CONCURRENCY = 4
 const BLOCK_TYPES = [
   'inventory',
   'market',
@@ -1234,6 +1235,25 @@ export default {
         .map(Number)
         .filter((n) => Number.isFinite(n)))]
     }
+    async function fetchSellBooks(orders) {
+      const goods = [...new Map(orders.map((o) => {
+        const key = marketBookKey(orderItemId(o), orderItemType(o))
+        return [key, { key, id: orderItemId(o), kind: orderItemType(o) === 1 ? 'cargo' : 'item' }]
+      })).values()]
+      const books = {}
+      let next = 0
+      async function worker() {
+        while (next < goods.length) {
+          const good = goods[next++]
+          try {
+            const data = await fetchBitjita(`/market/${good.kind}/${encodeURIComponent(good.id)}`)
+            books[good.key] = sellBook(data?.sellOrders)
+          } catch {}
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(MARKET_BOOK_CONCURRENCY, goods.length) }, worker))
+      return books
+    }
     async function loadMarketForPlayer(playerEntityId) {
       const marketPinned = pinned.value.filter((p) => isMarketBlock(p) && String(p.playerEntityId) === String(playerEntityId))
       if (!marketPinned.length) return
@@ -1255,12 +1275,13 @@ export default {
         }])
         const bulkMaps = await fetchBulkMaps(orderIdsOfType(sellOrders, 0), orderIdsOfType(sellOrders, 1))
         const wantsTrades = marketPinned.some((p) => marketTab(p.inventoryId) === 'trades')
-        const [collectionsRes, tradesRes, inventoriesRes] = await Promise.all([
+        const [collectionsRes, tradesRes, inventoriesRes, sellBooks] = await Promise.all([
           fetchBitjita(`/players/${playerEntityId}/market-collections`).catch(() => null),
           wantsTrades
             ? fetchBitjita(`/market/player/${playerEntityId}/trades`, { limit: String(MARKET_TRADES_LIMIT) }).catch(() => null)
             : Promise.resolve(null),
           fetchBitjita(`/players/${playerEntityId}/inventories`).catch(() => null),
+          fetchSellBooks(sellOrders),
         ])
         marketPinned.forEach((p) => {
           const st = ensureInventoryState(p.inventoryId)
@@ -1269,6 +1290,7 @@ export default {
           st.error = null
           st.marketOrders = sellOrders
           st.marketBulkMaps = bulkMaps
+          st.marketBooks = sellBooks
           if (collectionsRes) st.marketCollections = collectionsRes.collections ?? []
           if (inventoriesRes) st.marketBalance = carriedCoins(inventoriesRes.inventories, playerEntityId)
           if (tradesRes) {

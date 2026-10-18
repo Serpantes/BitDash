@@ -56,7 +56,7 @@
             <span></span>
             <span>{{ t('common.item') }}</span>
             <span class="mrow-col mrow-col--mine" :title="t('marketBlock.yourPriceTitle')">{{ t('marketBlock.yourPrice') }}</span>
-            <span class="mrow-col mrow-col--wide" :title="t('marketBlock.lowestTitle')">{{ t('marketBlock.lowest') }}</span>
+            <span class="mrow-col mrow-col--wide" :title="t('marketBlock.regionTitle')">{{ t('marketBlock.region') }}</span>
             <span class="mrow-col mrow-col--wide" :title="t('marketBlock.averageTitle')">{{ t('marketBlock.average') }}</span>
             <span class="mrow-col mrow-col--wide" :title="t('marketBlock.lotTitle')">{{ t('marketBlock.lot') }}</span>
           </div>
@@ -93,12 +93,12 @@
               </span>
               <span class="mrow-col mrow-col--mine mrow-cell">
                 <span class="mrow-value">{{ formatPrice(row.unitPrice) }}</span>
-                <span class="mrow-tag mrow-tag--narrow" :class="lowestTone(row)" :title="lowestHint(row)">{{ lowestTag(row, true) }}</span>
+                <span class="mrow-tag mrow-tag--narrow mrow-tag--muted" :title="regionHint(row)">{{ regionShort(row) }}</span>
                 <span class="mrow-tag mrow-tag--muted mrow-tag--wide">{{ t('marketBlock.perUnit') }}</span>
               </span>
-              <span class="mrow-col mrow-col--wide mrow-cell" :title="lowestHint(row)">
-                <span class="mrow-value mrow-value--market">{{ formatPrice(row.market.lowest) }}</span>
-                <span class="mrow-tag" :class="lowestTone(row)">{{ lowestTag(row) }}</span>
+              <span class="mrow-col mrow-col--wide mrow-cell" :title="regionHint(row)">
+                <span class="mrow-value mrow-value--market">{{ formatPrice(row.region?.lowest) }}</span>
+                <span class="mrow-tag mrow-tag--muted">{{ regionSub(row) }}</span>
               </span>
               <span class="mrow-col mrow-col--wide mrow-cell" :title="averageHint(row)">
                 <span class="mrow-value mrow-value--market">{{ formatPrice(row.market.average) }}<small v-if="row.market.averageWindow === '24h'">{{ t('marketBlock.window24h') }}</small></span>
@@ -245,6 +245,7 @@ import {
   orderTotals,
   playerOrderRows,
   priceStanding,
+  regionalSell,
 } from '../marketOrders'
 import { formatClock, formatDay } from '../xpHistory'
 import { t } from '../i18n'
@@ -271,7 +272,8 @@ export default {
 
     const view = computed(() => (props.block.marketTab === 'trades' ? 'trades' : 'sell'))
     const ordersLoaded = computed(() => Array.isArray(props.market?.marketOrders))
-    const rows = computed(() => playerOrderRows(props.market?.marketOrders, 'sell', props.market?.marketBulkMaps, resolveItem))
+    const rows = computed(() => playerOrderRows(props.market?.marketOrders, 'sell', props.market?.marketBulkMaps, resolveItem)
+      .map((row) => ({ ...row, region: regionalSell(row, props.market?.marketBooks, props.block.playerEntityId) })))
     const groups = computed(() => groupByClaim(rows.value))
     const totals = computed(() => orderTotals(rows.value))
     const totalsTitle = computed(() => {
@@ -370,21 +372,30 @@ export default {
       if (row.claim?.name) parts.push(row.claim.name)
       return parts.join(' · ')
     }
-    function lowestTone(row) {
-      if (row.market.lowest == null) return 'mrow-tag--muted'
-      return row.market.isLowest ? 'mrow-tag--good' : 'mrow-tag--warn'
+    function regionName(row) {
+      return row.claim.regionName || t('marketBlock.thisRegion')
     }
-    function lowestTag(row, short = false) {
-      const { lowest, isLowest, lowestPct } = row.market
-      if (lowest == null) return short ? '' : t('marketBlock.noSellers')
-      if (isLowest) return t('marketBlock.lowestIsYou')
-      return short ? t('marketBlock.lowestShort', { price: formatPrice(lowest) }) : t('marketBlock.youAreHigher', { pct: formatPct(lowestPct).replace('+', '') })
+    function regionSub(row) {
+      if (!row.region) return ''
+      return row.region.sellers ? t('marketBlock.regionSellers', { n: row.region.sellers }) : t('marketBlock.regionAlone')
     }
-    function lowestHint(row) {
-      const { lowest, isLowest } = row.market
-      if (lowest == null) return t('marketBlock.lowestTitle')
-      if (isLowest) return t('marketBlock.lowestIsYouTitle')
-      return t('marketBlock.youAreHigherTitle', { lowest: formatPrice(lowest), price: formatPrice(row.unitPrice) })
+    function regionShort(row) {
+      if (!row.region) return ''
+      return row.region.lowest != null ? t('marketBlock.regionShort', { price: formatPrice(row.region.lowest) }) : t('marketBlock.regionAloneShort')
+    }
+    function regionHint(row) {
+      const region = row.region
+      if (!region) return t('marketBlock.regionTitle')
+      if (!region.cheapest) return t('marketBlock.regionAloneHint', { region: regionName(row) })
+      return t('marketBlock.regionHint', {
+        region: regionName(row),
+        name: region.cheapest.owner ?? '—',
+        price: formatPrice(region.cheapest.price),
+        qty: formatAmount(region.cheapest.quantity),
+        claim: region.cheapest.claimName ?? t('marketItem.market'),
+        sellers: t('marketBlock.regionSellers', { n: region.sellers }),
+        total: formatAmount(region.quantity),
+      })
     }
     function averageTone(row) {
       const pct = row.market.averagePct
@@ -420,7 +431,7 @@ export default {
       collect, collectGroupList, tradeList, tradesTotal, showBuys, shownTrades, week, recentGoods,
       setView, openGood, onSearchSelect, clearRecent, toggleBuys,
       claimLabel, claimCoords, formatMoment, pileName, pileDetail, pileGood, tradeDetail, tradeGood,
-      lowestTone, lowestTag, lowestHint, averageTone, averageTag, averageHint, narrowSub,
+      regionSub, regionShort, regionHint, averageTone, averageTag, averageHint, narrowSub,
       goodMeta, formatAmount, formatPrice
     }
   },
@@ -568,7 +579,6 @@ button.mrow:focus-visible { outline: 2px solid var(--cream); outline-offset: -2p
 .mrow-tag:empty { display: none; }
 .mrow-tag--muted { color: var(--muted); font-weight: 600; }
 .mrow-tag--good { color: var(--success); }
-.mrow-tag--warn { color: var(--warning); }
 .mrow-tag--bad { color: var(--danger); }
 
 .trade-filter {
