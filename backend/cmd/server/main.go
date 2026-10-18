@@ -25,6 +25,7 @@ func main() {
 	itemNameFile := os.Getenv("ITEM_NAME_FILE")
 	bitjitaCacheDir := os.Getenv("BITJITA_CACHE_DIR")
 	xpHistoryDir := os.Getenv("XP_HISTORY_DIR")
+	dashboardFile := os.Getenv("DASHBOARD_FILE")
 	if external == "" {
 		external = "https://api.example.com/data"
 	}
@@ -42,6 +43,10 @@ func main() {
 	}
 	if xpHistoryDir == "" {
 		xpHistoryDir = "/var/lib/bitdash/xp-history"
+	}
+
+	if dashboardFile == "" {
+		dashboardFile = "/var/lib/bitdash/dashboard.json"
 	}
 
 	liveCacheTTL := 2 * time.Minute
@@ -74,6 +79,10 @@ func main() {
 		log.Fatalf("item name store: %v", err)
 	}
 	itemNamesHandler := delivery.NewItemNamesHandler(bitjitaDataCache, itemNameStore)
+	dashboardStore, err := repository.NewDashboardStore(dashboardFile)
+	if err != nil {
+		log.Fatalf("dashboard store: %v", err)
+	}
 	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 10*time.Minute)
 
 	http.HandleFunc("/api/data", handler)
@@ -84,6 +93,7 @@ func main() {
 	http.HandleFunc("/api/bitjita-icon", bitjitaIconHandler)
 	http.HandleFunc("/api/item-names", itemNamesHandler)
 	http.HandleFunc("/api/market-catalog", delivery.NewMarketCatalogHandler(marketCatalog))
+	http.HandleFunc("/api/dashboard", delivery.NewDashboardHandler(dashboardStore))
 	http.HandleFunc("/api/xp-history/", delivery.NewXPHistoryHandler(xpHistory))
 	http.Handle("/map-embed", delivery.NewMapEmbedHandler())
 	http.Handle("/map-embed/", delivery.NewMapEmbedHandler())
@@ -106,8 +116,8 @@ func main() {
 	}
 
 	log.Printf(
-		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, player-response-file -> %s, item-name-file -> %s",
-		addr, external, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, playerResponseFile, itemNameFile,
+		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, dashboard -> %s, player-response-file -> %s, item-name-file -> %s",
+		addr, external, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, dashboardFile, playerResponseFile, itemNameFile,
 	)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)

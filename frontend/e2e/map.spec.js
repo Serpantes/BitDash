@@ -14,18 +14,17 @@ function mapBlock(mapState) {
 }
 
 async function openMap(page, mapState = {}) {
-  await page.addInitScript((block) => {
-    localStorage.setItem('bitdash.locale', 'en')
-    if (!localStorage.getItem('bitdash:pinned')) localStorage.setItem('bitdash:pinned', JSON.stringify([block]))
-  }, mapBlock(mapState))
+  await page.request.put('/api/dashboard', { data: { force: true, blocks: [mapBlock(mapState)] } })
+  await page.addInitScript(() => localStorage.setItem('bitdash.locale', 'en'))
   await page.goto('/')
   await expect(page.locator('.map-tile')).toBeVisible()
   await expect(page.locator('.map-veil')).toHaveCount(0, { timeout: 60_000 })
   return page.frames().find((frame) => frame.url().includes('/map-embed/'))
 }
 
-function savedHash(page) {
-  return page.evaluate(() => JSON.parse(localStorage.getItem('bitdash:pinned'))[0].mapState?.hash ?? null)
+async function savedHash(page) {
+  const res = await page.request.get('/api/dashboard')
+  return (await res.json()).blocks[0]?.mapState?.hash ?? null
 }
 
 test.describe('map tile', () => {

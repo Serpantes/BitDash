@@ -97,10 +97,8 @@ async function openMarket(page, { size = 'large', tab } = {}) {
     marketTileSize: size,
     ...(tab ? { marketTab: tab } : {}),
   }
-  await page.addInitScript((pinned) => {
-    localStorage.setItem('bitdash.locale', 'en')
-    localStorage.setItem('bitdash:pinned', JSON.stringify([pinned]))
-  }, block)
+  await page.request.put('/api/dashboard', { data: { force: true, blocks: [block] } })
+  await page.addInitScript(() => localStorage.setItem('bitdash.locale', 'en'))
   await page.goto('/')
   const market = page.locator('.market')
   await expect(market).toBeVisible()
