@@ -55,9 +55,10 @@
           <div class="mrow mrow--head" aria-hidden="true">
             <span></span>
             <span>{{ t('common.item') }}</span>
-            <span class="mrow-price">{{ t('marketBlock.price') }}</span>
-            <span class="mrow-ref" :title="t('marketBlock.averageTitle')">{{ t('marketBlock.average') }}</span>
-            <span class="mrow-lot">{{ t('marketBlock.lot') }}</span>
+            <span class="mrow-col mrow-col--mine" :title="t('marketBlock.yourPriceTitle')">{{ t('marketBlock.yourPrice') }}</span>
+            <span class="mrow-col mrow-col--wide" :title="t('marketBlock.lowestTitle')">{{ t('marketBlock.lowest') }}</span>
+            <span class="mrow-col mrow-col--wide" :title="t('marketBlock.averageTitle')">{{ t('marketBlock.average') }}</span>
+            <span class="mrow-col mrow-col--wide" :title="t('marketBlock.lotTitle')">{{ t('marketBlock.lot') }}</span>
           </div>
           <section v-for="group in groups" :key="group.key" class="market-group">
             <h3 class="market-group-title">
@@ -88,16 +89,24 @@
               <span class="mrow-main">
                 <span class="mrow-name">{{ row.good.name }}</span>
                 <span class="mrow-sub mrow-sub--wide">{{ goodMeta(row.good) }}</span>
-                <span class="mrow-sub mrow-sub--narrow">{{ t('marketBlock.at', { price: formatPrice(row.unitPrice) }) }}</span>
+                <span class="mrow-sub mrow-sub--narrow">{{ narrowSub(row) }}</span>
               </span>
-              <span class="mrow-price">
-                {{ formatPrice(row.unitPrice) }}
-                <span v-if="row.diffPct != null" class="mrow-diff" :class="`mrow-diff--${priceStanding(row)}`" :title="standingHint(row)">{{ formatPct(row.diffPct) }}</span>
+              <span class="mrow-col mrow-col--mine mrow-cell">
+                <span class="mrow-value">{{ formatPrice(row.unitPrice) }}</span>
+                <span class="mrow-tag mrow-tag--narrow" :class="lowestTone(row)" :title="lowestHint(row)">{{ lowestTag(row, true) }}</span>
+                <span class="mrow-tag mrow-tag--muted mrow-tag--wide">{{ t('marketBlock.perUnit') }}</span>
               </span>
-              <span class="mrow-ref" :class="{ 'mrow-ref--book': row.reference.value && !row.reference.isAverage }" :title="row.reference.kind">{{ formatPrice(row.reference.value) }}</span>
-              <span class="mrow-lot">
-                {{ formatAmount(row.total) }}
-                <span v-if="row.diffPct != null" class="mrow-diff mrow-diff--under" :class="`mrow-diff--${priceStanding(row)}`" :title="standingHint(row)">{{ formatPct(row.diffPct) }}</span>
+              <span class="mrow-col mrow-col--wide mrow-cell" :title="lowestHint(row)">
+                <span class="mrow-value mrow-value--market">{{ formatPrice(row.market.lowest) }}</span>
+                <span class="mrow-tag" :class="lowestTone(row)">{{ lowestTag(row) }}</span>
+              </span>
+              <span class="mrow-col mrow-col--wide mrow-cell" :title="averageHint(row)">
+                <span class="mrow-value mrow-value--market">{{ formatPrice(row.market.average) }}<small v-if="row.market.averageWindow === '24h'">{{ t('marketBlock.window24h') }}</small></span>
+                <span class="mrow-tag" :class="averageTone(row)">{{ averageTag(row) }}</span>
+              </span>
+              <span class="mrow-col mrow-col--wide mrow-cell">
+                <span class="mrow-value">{{ formatAmount(row.total) }}</span>
+                <span class="mrow-tag mrow-tag--muted">{{ formatAmount(row.quantity) }} × {{ formatPrice(row.unitPrice) }}</span>
               </span>
             </button>
           </section>
@@ -228,6 +237,7 @@ import { useItemCache } from '../composables/useItemCache'
 import { goodMeta } from '../marketSearch'
 import { collectGroups, collectRows, collectSummary, tradeRows, tradeTotals } from '../marketTrades'
 import {
+  DEVIATION_PCT,
   formatAmount,
   formatPct,
   formatPrice,
@@ -235,7 +245,6 @@ import {
   orderTotals,
   playerOrderRows,
   priceStanding,
-  standingHint,
 } from '../marketOrders'
 import { formatClock, formatDay } from '../xpHistory'
 import { t } from '../i18n'
@@ -347,7 +356,7 @@ export default {
     function pileDetail(row) {
       if (!row.trade) return row.isCoins ? t('marketBlock.outsideHistory') : t('marketBlock.orderClosed')
       const trade = row.trade
-      const parts = [`${formatAmount(trade.quantity)} × ${formatPrice(trade.unitPrice)}`]
+      const parts = [t('marketBlock.qtyAt', { qty: formatAmount(trade.quantity), price: formatPrice(trade.unitPrice) })]
       if (trade.counterparty) parts.push(t(trade.side === 'sell' ? 'marketBlock.boughtBy' : 'marketBlock.soldBy', { name: trade.counterparty }))
       return parts.join(' · ')
     }
@@ -356,9 +365,50 @@ export default {
       return item?.id && item.id !== COIN_ITEM_ID ? { ...item } : null
     }
     function tradeDetail(row) {
-      const parts = [`${formatAmount(row.quantity)} × ${formatPrice(row.unitPrice)}`]
+      const parts = [t('marketBlock.qtyAt', { qty: formatAmount(row.quantity), price: formatPrice(row.unitPrice) })]
       if (row.counterparty) parts.push(t(row.side === 'sell' ? 'marketBlock.boughtBy' : 'marketBlock.soldBy', { name: row.counterparty }))
       if (row.claim?.name) parts.push(row.claim.name)
+      return parts.join(' · ')
+    }
+    function lowestTone(row) {
+      if (row.market.lowest == null) return 'mrow-tag--muted'
+      return row.market.isLowest ? 'mrow-tag--good' : 'mrow-tag--warn'
+    }
+    function lowestTag(row, short = false) {
+      const { lowest, isLowest, lowestPct } = row.market
+      if (lowest == null) return short ? '' : t('marketBlock.noSellers')
+      if (isLowest) return t('marketBlock.lowestIsYou')
+      return short ? t('marketBlock.lowestShort', { price: formatPrice(lowest) }) : t('marketBlock.youAreHigher', { pct: formatPct(lowestPct).replace('+', '') })
+    }
+    function lowestHint(row) {
+      const { lowest, isLowest } = row.market
+      if (lowest == null) return t('marketBlock.lowestTitle')
+      if (isLowest) return t('marketBlock.lowestIsYouTitle')
+      return t('marketBlock.youAreHigherTitle', { lowest: formatPrice(lowest), price: formatPrice(row.unitPrice) })
+    }
+    function averageTone(row) {
+      const pct = row.market.averagePct
+      if (pct == null || Math.abs(pct) <= DEVIATION_PCT) return 'mrow-tag--muted'
+      return pct > 0 ? 'mrow-tag--bad' : 'mrow-tag--good'
+    }
+    function averageTag(row) {
+      const pct = row.market.averagePct
+      if (pct == null) return t('marketBlock.noTrades')
+      if (Math.abs(pct) < 0.05) return t('marketBlock.atMarket')
+      return `${pct > 0 ? '▲' : '▼'} ${formatPct(Math.abs(pct)).replace('+', '')}`
+    }
+    function averageHint(row) {
+      const { average, averagePct, averageWindow } = row.market
+      if (average == null) return t('marketBlock.noTradesTitle')
+      const basis = t(averageWindow === '24h' ? 'marketRef.avg24h' : 'marketRef.avg7d')
+      const standing = priceStanding({ side: 'sell', diffPct: averagePct })
+      const pct = formatPct(Math.abs(averagePct)).replace('+', '')
+      const text = standing === 'fair' ? t('standing.fair', { pct: DEVIATION_PCT }) : t(averagePct > 0 ? 'standing.sellAbove' : 'standing.sellBelow', { pct })
+      return `${text}. ${basis.charAt(0).toUpperCase()}${basis.slice(1)}: ${formatPrice(average)}`
+    }
+    function narrowSub(row) {
+      const parts = [t('marketBlock.lotSum', { amount: formatAmount(row.total) })]
+      if (row.market.average != null) parts.push(t('marketBlock.avgShort', { price: formatPrice(row.market.average) }))
       return parts.join(' · ')
     }
     function tradeGood(row) {
@@ -370,7 +420,8 @@ export default {
       collect, collectGroupList, tradeList, tradesTotal, showBuys, shownTrades, week, recentGoods,
       setView, openGood, onSearchSelect, clearRecent, toggleBuys,
       claimLabel, claimCoords, formatMoment, pileName, pileDetail, pileGood, tradeDetail, tradeGood,
-      goodMeta, formatAmount, formatPrice, formatPct, priceStanding, standingHint,
+      lowestTone, lowestTag, lowestHint, averageTone, averageTag, averageHint, narrowSub,
+      goodMeta, formatAmount, formatPrice
     }
   },
 }
@@ -468,8 +519,8 @@ export default {
 button.mrow { cursor: pointer; transition: background 0.12s; }
 button.mrow:hover { background: rgba(233, 223, 196, 0.06); }
 button.mrow:focus-visible { outline: 2px solid var(--cream); outline-offset: -2px; }
-.mrow-price,
-.mrow-ref,
+.mrow .mrow-col--wide,
+.mrow-tag--wide,
 .mrow-sub--wide { display: none; }
 .mrow--head {
   position: sticky;
@@ -489,9 +540,8 @@ button.mrow:focus-visible { outline: 2px solid var(--cream); outline-offset: -2p
   color: var(--muted);
 }
 .mrow--head > span { font: inherit; letter-spacing: inherit; color: inherit; }
-.mrow--head .mrow-lot,
-.mrow--head .mrow-price,
-.mrow--head .mrow-ref { justify-content: flex-end; text-align: right; }
+.mrow--head .mrow-col { text-align: right; cursor: help; }
+.mrow--head .mrow-col--mine { color: var(--gold); }
 .mrow-thumb { position: relative; display: inline-flex; }
 .mrow-thumb :deep(.item-card--mini .item-card__icon),
 .mrow-thumb :deep(.item-card--mini.item-card--cargo .item-card__icon) { width: 30px; height: 36px; flex-basis: 30px; border-radius: 5px; }
@@ -510,14 +560,16 @@ button.mrow:focus-visible { outline: 2px solid var(--cream); outline-offset: -2p
 .mrow-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .mrow-name { font-size: 13px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mrow-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.mrow-lot,
-.mrow-price,
-.mrow-ref { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.mrow-lot { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-size: 13px; font-weight: 800; }
-.mrow-diff { font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.mrow-diff--fair { color: var(--muted); }
-.mrow-diff--good { color: var(--success); }
-.mrow-diff--bad { color: var(--danger); }
+.mrow-cell { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mrow-value { font-size: 14px; font-weight: 800; line-height: 1.1; color: var(--text); }
+.mrow-value small { margin-left: 2px; font-size: 9.5px; font-weight: 700; color: var(--muted); }
+.mrow-value--market { font-size: 13px; font-weight: 700; color: var(--muted-strong); }
+.mrow-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; font-weight: 700; line-height: 1.2; }
+.mrow-tag:empty { display: none; }
+.mrow-tag--muted { color: var(--muted); font-weight: 600; }
+.mrow-tag--good { color: var(--success); }
+.mrow-tag--warn { color: var(--warning); }
+.mrow-tag--bad { color: var(--danger); }
 
 .trade-filter {
   margin-left: auto;
@@ -573,17 +625,17 @@ button.mrow:focus-visible { outline: 2px solid var(--cream); outline-offset: -2p
 .collect-value { display: inline-flex; align-items: center; gap: 6px; font-size: 22px; font-weight: 800; line-height: 1; color: var(--gold); }
 .collect-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 10px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-@container market (min-width: 520px) {
-  .mrow { grid-template-columns: 34px minmax(0, 1fr) 118px 84px 104px; min-height: 44px; gap: 12px; }
+@container market (min-width: 600px) {
+  .mrow { grid-template-columns: 34px minmax(0, 1fr) 84px 112px 96px 104px; min-height: 46px; gap: 12px; }
   .mrow-thumb :deep(.item-card--mini .item-card__icon),
   .mrow-thumb :deep(.item-card--mini.item-card--cargo .item-card__icon) { width: 32px; height: 38px; flex-basis: 32px; }
   .mrow-thumb :deep(.item-card__badge) { display: block; }
-  .mrow-price { display: flex; justify-content: flex-end; align-items: baseline; gap: 6px; font-size: 13px; font-weight: 800; }
-  .mrow-ref { display: block; color: var(--muted-strong); }
-  .mrow-ref--book { font-style: italic; color: var(--muted); }
-  .mrow-sub--wide { display: block; }
+  .mrow .mrow-col--wide { display: flex; }
+  .mrow--head .mrow-col--wide { display: block; }
+  .mrow-sub--wide,
+  .mrow-tag--wide { display: block; }
   .mrow-sub--narrow,
-  .mrow-diff--under { display: none; }
+  .mrow-tag--narrow { display: none; }
   .mrow--trade { grid-template-columns: 34px minmax(0, 1fr) 120px 96px; }
 }
 </style>

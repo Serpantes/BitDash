@@ -39,7 +39,7 @@
 
       <template v-else>
         <div class="mi-kpis">
-          <div v-for="kpi in kpis" :key="kpi.id" class="mi-kpi" :title="kpi.title">
+          <div v-for="kpi in kpis" :key="kpi.id" class="mi-kpi" :class="`mi-kpi--${kpi.id}`" :title="kpi.title">
             <span class="mi-kpi-label">{{ kpi.label }}</span>
             <span class="mi-kpi-value">{{ kpi.value }}<small v-if="kpi.unit">{{ kpi.unit }}</small></span>
             <span class="mi-kpi-sub">{{ kpi.sub }}</span>
@@ -55,8 +55,8 @@
         </ul>
 
         <div class="mi-books">
-          <div v-for="book in books" :key="book.side" class="mi-book">
-            <h4 class="mi-section">
+          <div v-for="book in books" :key="book.side" class="mi-book" :class="`mi-book--${book.side}`">
+            <h4 class="mi-section mi-section--book">
               {{ book.title }}
               <span class="mi-section-note">{{ book.rows.length ? t('marketItem.orders', { n: book.rows.length }) : '' }}</span>
             </h4>
@@ -69,7 +69,7 @@
                 v-for="row in book.visible"
                 :key="row.key"
                 class="mi-offer"
-                :class="{ 'mi-offer--mine': row.mine }"
+                :class="{ 'mi-offer--mine': row.mine, 'mi-offer--best': row.price === book.rows[0].price }"
                 :title="offerTitle(row, book.side)"
               >
                 <span class="mi-offer-price">{{ formatPrice(row.price) }}</span>
@@ -388,6 +388,14 @@ export default {
   border-radius: 4px;
   background: rgba(20, 18, 30, 0.4);
 }
+.mi-kpi--sell,
+.mi-kpi--buy { border-top: 2px solid var(--book-color); }
+.mi-kpi--sell,
+.mi-book--sell { --book-color: var(--danger); }
+.mi-kpi--buy,
+.mi-book--buy { --book-color: var(--success); }
+.mi-kpi--sell .mi-kpi-label,
+.mi-kpi--buy .mi-kpi-label { color: var(--text-soft); }
 .mi-kpi-label { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mi-kpi-value { font-size: 19px; font-weight: 800; line-height: 1.15; color: var(--text); white-space: nowrap; }
 .mi-kpi-value small { margin-left: 4px; font-size: 11px; font-weight: 700; color: var(--muted); }
@@ -420,6 +428,15 @@ export default {
   color: var(--text-soft);
 }
 .mi-section-note { font-family: var(--font-body); font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.mi-section--book::before {
+  content: '';
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  margin-right: -2px;
+  border-radius: 50%;
+  background: var(--book-color);
+}
 .mi-note { margin: 0; font-size: 12px; color: var(--muted); }
 
 .mi-books { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -446,6 +463,7 @@ export default {
 .mi-offer--head span:nth-child(-n+2),
 .mi-trade--head span:nth-child(-n+2) { text-align: right; }
 .mi-offer-price { font-weight: 800; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.mi-offer--best .mi-offer-price { color: var(--book-color); }
 .mi-offer-qty { color: var(--muted-strong); text-align: right; font-variant-numeric: tabular-nums; }
 .mi-offer-place { min-width: 0; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mi-offer-place small { font-size: 11px; color: var(--muted); }

@@ -35,6 +35,7 @@ export default defineConfig({
         BITJITA_CACHE_DIR: path.join(dataDir, 'bitjita-cache'),
         XP_HISTORY_DIR: path.join(dataDir, 'xp-history'),
         PLAYER_RESPONSE_FILE: path.join(dataDir, 'players.json'),
+        ITEM_NAME_FILE: path.join(dataDir, 'item-names.json'),
       },
     },
     {

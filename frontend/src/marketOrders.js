@@ -26,6 +26,25 @@ export function marketReference(stats, side = 'sell') {
   return none
 }
 
+export function marketPrices(stats, unitPrice) {
+  const num = (value) => {
+    const n = Number(value)
+    return value != null && Number.isFinite(n) && n > 0 ? n : null
+  }
+  const lowest = num(stats?.lowestSellPrice)
+  const avg7 = num(stats?.vwap7d)
+  const average = avg7 ?? num(stats?.vwap24h)
+  const pct = (base) => (base && unitPrice ? ((unitPrice - base) / base) * 100 : null)
+  return {
+    lowest,
+    isLowest: lowest != null && unitPrice > 0 && unitPrice <= lowest,
+    lowestPct: pct(lowest),
+    average,
+    averageWindow: average == null ? null : avg7 != null ? '7d' : '24h',
+    averagePct: pct(average),
+  }
+}
+
 export function playerOrderRows(orders, side, priceMaps, resolve) {
   return (orders ?? []).map((order, index) => {
     const itemType = itemTypeOf(order.itemType ?? order.item_type)
@@ -52,6 +71,7 @@ export function playerOrderRows(orders, side, priceMaps, resolve) {
       unitPrice,
       total: unitPrice * quantity,
       reference,
+      market: marketPrices(stats, unitPrice),
       diffPct: Number.isFinite(diffPct) ? diffPct : null,
       claim: claimOf(order),
     }
