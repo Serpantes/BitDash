@@ -33,6 +33,9 @@
       <template v-else>
         <div v-if="selected" class="ore-hero" :title="rowTitle(selected)">
           <div class="ore-hero-figure">
+            <button type="button" class="ore-tier-btn" :aria-expanded="tableOpen" @click="tableOpen = !tableOpen">
+              T{{ selected.tier }} {{ selected.ingotName.replace(/ Ingot$/, '') }} {{ tableOpen ? '▴' : '▾' }}
+            </button>
             <span class="ore-hero-value">{{ formatNumber(selected.chunks) }}</span>
             <span class="ore-hero-label">{{ t('ore.heroLeft', { chunk: selected.chunkName }) }}</span>
           </div>
@@ -44,21 +47,17 @@
             <dt>{{ t('ore.heroMoney') }}</dt>
             <dd :title="moneyLabel(selected)">{{ moneyText(selected) }}</dd>
           </dl>
-          <div class="ore-hero-side">
-            T{{ selected.tier }} · {{ formatNumber(selected.ingots) }} × {{ selected.ingotName }}<template v-if="selected.flux"> · {{ formatNumber(selected.flux) }} × {{ t('ore.flux') }}</template> · {{ formatNumber(selected.ingots) }} × {{ selected.logName }}
-          </div>
         </div>
 
-        <div class="ore-table-wrap">
+        <div v-if="tableOpen || !selected" class="ore-table-wrap">
           <table class="ore-table">
             <thead>
               <tr>
                 <th class="ore-col-name">{{ t('ore.colTier') }}</th>
                 <th class="ore-main" :title="t('ore.colChunksTitle')">{{ t('ore.colChunks') }}</th>
-                <th class="ore-main" :title="t('ore.colMoneyTitle')">{{ t('ore.colMoney') }}</th>
-                <th class="ore-gap" :title="t('ore.colPiecesTitle')">{{ t('ore.colPieces') }}</th>
+                <th :title="t('ore.colPiecesTitle')">{{ t('ore.colPieces') }}</th>
                 <th>{{ t('ore.colIngots') }}</th>
-                <th>{{ t('ore.colFlux') }}</th>
+                <th class="ore-main" :title="t('ore.colMoneyTitle')">{{ t('ore.colMoney') }}</th>
                 <th :title="t('ore.colTimeTitle')">{{ t('ore.colTime') }}</th>
               </tr>
             </thead>
@@ -68,7 +67,7 @@
                 :key="row.tier"
                 :class="{ 'ore-row--selected': row.tier === selected?.tier, 'ore-row--locked': row.locked }"
                 :title="rowTitle(row)"
-                @click="!row.locked && $emit('update:tier', row.tier)"
+                @click="pickTier(row)"
               >
                 <td class="ore-col-name">
                   <span class="ore-tier">T{{ row.tier }}</span>
@@ -79,13 +78,12 @@
                   {{ formatNumber(row.chunks) }}
                   <span v-if="row.haveChunks" class="ore-have">{{ t('ore.haveOf', { have: formatNumber(row.haveChunks), total: formatNumber(row.chunksTotal) }) }}</span>
                 </td>
-                <td class="ore-main">{{ moneyText(row) }}</td>
-                <td class="ore-gap" :title="stockTitle(row)">
+                <td :title="stockTitle(row)">
                   {{ formatNumber(row.pieces) }}
                   <span v-if="row.havePieces" class="ore-have">{{ t('ore.haveOf', { have: formatNumber(row.havePieces), total: formatNumber(row.piecesTotal) }) }}</span>
                 </td>
                 <td>{{ formatNumber(row.ingots) }}</td>
-                <td>{{ row.flux ? formatNumber(row.flux) : '—' }}</td>
+                <td class="ore-main">{{ moneyText(row) }}</td>
                 <td>{{ formatPlayTime(row.seconds) }}</td>
               </tr>
             </tbody>
@@ -98,9 +96,6 @@
           {{ trackLabel }}
         </button>
         <span>×{{ formatNumber(data.setup.xpRate, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} XP</span>
-        <span :title="t('ore.progressTitle')">{{ t('ore.progressShort', { n: formatNumber(data.setup.progressPerSwing), tool: data.setup.tool.name, power: data.setup.tool.power, skill: data.setup.skillPower }) }}</span>
-        <span>{{ t('ore.leftShort', { xp: formatXpCompact(xpLeft), level: targetLevel }) }}</span>
-        <span v-if="marketAge">{{ t('ore.marketAge', { age: marketAge }) }}</span>
       </div>
     </template>
   </div>
@@ -110,8 +105,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchSmithingOre, fetchSmithingStock } from '../api'
 import { formatNumber, t } from '../i18n'
-import { formatXpCompact, formatXpShort } from '../skillProgress'
-import { formatEta, formatPlayTime } from '../xpHistory'
+import { formatXpShort } from '../skillProgress'
+import { formatPlayTime } from '../xpHistory'
 import { orePlan, readCachedOreData, trackedStock, writeCachedOreData } from '../smithingOre'
 
 // The backend keeps setups and order books fresh within minutes; polling slower is enough.
@@ -138,10 +133,16 @@ export default {
   setup(props, { emit }) {
     const data = ref(null)
     const error = ref('')
-    const nowMs = ref(Date.now())
     const stock = ref(null)
     const stockError = ref('')
     const picking = ref(false)
+    // The table is for choosing a tier; once one is chosen, only its numbers stay on screen.
+    const tableOpen = ref(props.tier == null)
+    function pickTier(row) {
+      if (row.locked) return
+      emit('update:tier', row.tier)
+      tableOpen.value = false
+    }
     const showAllInventories = ref(false)
     let timer = null
     let stockTimer = null
@@ -162,7 +163,6 @@ export default {
       } catch (e) {
         error.value = t('ore.loadError', { error: e.message })
       }
-      nowMs.value = Date.now()
     }
     async function loadStock({ relist = false } = {}) {
       const id = props.playerEntityId
@@ -288,9 +288,6 @@ export default {
     const selected = computed(() => rows.value.find((row) => row.tier === props.tier && !row.locked)
       ?? rows.value.find((row) => !row.locked)
       ?? null)
-    const marketAge = computed(() => (data.value?.marketFetchedAt
-      ? formatEta(Math.max(0, (nowMs.value - data.value.marketFetchedAt) / 1000))
-      : ''))
 
     const formatMoney = (value) => formatXpShort(Math.round(value))
     function moneyText(row) {
@@ -331,11 +328,11 @@ export default {
     }
 
     return {
-      data, error, rows, selected, marketAge,
+      data, error, rows, selected, tableOpen, pickTier,
       stock, stockError, picking, showAllInventories, tracking, trackedSet, pickerGroups,
       toggleTracked, oreSummary, stockTitle, trackLabel, craftsSummary,
       moneyText, moneyLabel, lockText, rowTitle,
-      formatMoney, formatNumber, formatPlayTime, formatXpCompact, t,
+      formatMoney, formatNumber, formatPlayTime, t,
     }
   },
 }
@@ -347,7 +344,7 @@ export default {
 .ore-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px 20px; padding: 2px 2px 0; }
 .ore-hero-figure { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ore-hero-value { font-size: 34px; font-weight: 800; line-height: 1; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.ore-hero-label, .ore-hero-side {
+.ore-hero-label {
   min-width: 0;
   font-size: 11px;
   color: var(--muted);
@@ -364,8 +361,21 @@ export default {
   font-variant-numeric: tabular-nums;
 }
 .ore-hero-facts dt { color: var(--muted); }
+.ore-tier-btn {
+  align-self: flex-start;
+  margin-bottom: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--frame-soft);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ore-tier-btn:hover { border-color: var(--frame); color: var(--text); }
 .ore-hero-facts dd { margin: 0; font-weight: 800; color: var(--text); text-align: right; }
-.ore-hero-side { grid-column: 1 / -1; }
 
 .ore-table-wrap { flex: 1; min-height: 0; overflow: auto; }
 .ore-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -392,7 +402,6 @@ export default {
 }
 .ore-table th.ore-main { color: var(--text-soft); }
 .ore-table td.ore-main { font-size: 14px; font-weight: 800; color: var(--text); }
-.ore-table .ore-gap { padding-left: 18px; }
 .ore-have { display: block; font-size: 10px; font-weight: 600; color: var(--muted); }
 .ore-table .ore-col-name { text-align: left; }
 .ore-table tbody tr { cursor: pointer; }
