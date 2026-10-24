@@ -2,9 +2,15 @@ package repository
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"bitdash/backend/internal/cache"
 )
 
 func TestBuildSmithingSetupPicksStrongestHammerAndStats(t *testing.T) {
@@ -112,5 +118,133 @@ func TestCountStockReadsBothPocketFormats(t *testing.T) {
 	}
 	if countStock(nil, goods) != nil {
 		t.Error("an inventory without ore should have no counts")
+	}
+}
+
+func TestStockCraftsCountOutputsAndUnfinishedSmithing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/players/7/crafts":
+			fmt.Fprint(w, `{"craftResults": [
+				{"entityId": "c1", "ownerEntityId": "7", "progress": 1000, "craftCount": 10, "totalActionsRequired": 4100,
+				 "buildingName": "Magnificent Smithing Station", "craftedItem": [{"item_id": 30, "quantity": 1}]},
+				{"entityId": "c2", "ownerEntityId": "7", "progress": 0, "craftCount": 5, "totalActionsRequired": 2050,
+				 "completed": true, "craftedItem": [{"item_id": 20, "quantity": 4}]},
+				{"entityId": "c3", "ownerEntityId": "8", "progress": 0, "craftCount": 5, "totalActionsRequired": 100,
+				 "craftedItem": [{"item_id": 30, "quantity": 1}]},
+				{"entityId": "c4", "ownerEntityId": "7", "progress": 0, "craftCount": 5, "totalActionsRequired": 100,
+				 "craftedItem": [{"item_id": 999, "quantity": 1}]}
+			]}`)
+		case "/api/players/7/passive-crafts":
+			fmt.Fprint(w, `{"craftResults": [
+				{"entityId": "p1", "ownerEntityId": "7", "craftCount": 2, "craftedItem": [{"item_id": 40, "quantity": 1}]}
+			]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	b, err := NewBitjitaCache(server.URL, t.TempDir(), cache.New(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ore := NewSmithingOre(b, time.Minute, time.Minute)
+	ore.chains = []IngotChain{{Tier: 9, IngotID: "50", PieceItemID: "20", ConcentrateItemID: "30", MoltenItemID: "40"}}
+
+	crafts := ore.stockCrafts("7")
+	if len(crafts) != 3 {
+		t.Fatalf("crafts = %+v, want the player's three chain crafts", crafts)
+	}
+	byID := map[string]StockCraft{}
+	for _, c := range crafts {
+		byID[c.ID] = c
+	}
+	if c := byID["c1"]; c.Kind != "concentrates" || c.Output != 10 || c.Step != "concentrate" || c.RemainingEffort != 3100 {
+		t.Errorf("concentrate craft = %+v, want 10 concentrates with 3100 effort left", c)
+	}
+	if c := byID["c2"]; c.Kind != "pieces" || c.Output != 20 || c.RemainingEffort != 0 {
+		t.Errorf("finished piece craft = %+v, want 20 pieces and no effort left", c)
+	}
+	if c := byID["p1"]; c.Kind != "molten" || c.Output != 2 {
+		t.Errorf("passive smelt = %+v, want 2 molten", c)
+	}
+}
+
+func TestStockRereadsOnlyTrackedSources(t *testing.T) {
+	var mu sync.Mutex
+	hits := map[string]int{}
+	wagon := `{"entityId": "w1", "ownerEntityId": "w1", "inventoryName": "Ann's Wagon (III)", "pockets": [{"contents": {"itemId": 3001, "itemType": 1, "quantity": 5}}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits[r.URL.Path]++
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/players/7":
+			fmt.Fprint(w, `{"player": {"username": "Ann", "claims": [{"entityId": "c9", "name": "Town", "memberPermissions": {"inventoryPermission": 1}}]}}`)
+		case "/api/players/7/inventories":
+			mu.Lock()
+			body := wagon
+			mu.Unlock()
+			fmt.Fprintf(w, `{"inventories": [%s]}`, body)
+		case "/api/players/7/housing":
+			fmt.Fprint(w, `[]`)
+		case "/api/claims/c9/inventories":
+			fmt.Fprint(w, `{"buildings": [{"entityId": "b1", "buildingName": "Stockpile", "inventory": []}]}`)
+		case "/api/players/7/vault", "/api/deployables":
+			fmt.Fprint(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	b, err := NewBitjitaCache(server.URL, t.TempDir(), cache.New(time.Nanosecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ore := NewSmithingOre(b, time.Minute, time.Minute)
+	ore.chains = []IngotChain{{Tier: 2, ChunkCargoID: "3001"}}
+
+	stock, err := ore.Stock("7", nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stock.Inventories) != 2 || stock.Inventories[0].ID != "deployable:Wagon (III)" || stock.Inventories[0].Counts["2"].Chunks != 5 {
+		t.Fatalf("listing = %+v, want the wagon (5 chunks) and the claim stockpile", stock.Inventories)
+	}
+
+	// The wagon is emptied and its listing ages past a minute: only that listing is reread.
+	mu.Lock()
+	wagon = `{"entityId": "x", "inventoryName": "Toolbelt", "pockets": []}`
+	hits = map[string]int{}
+	mu.Unlock()
+	ore.stocks["7"].stock.SourceAt["player"] = time.Now().Add(-2 * time.Minute).UnixMilli()
+	stock, err = ore.Stock("7", []string{"deployable:Wagon (III)"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits["/api/players/7/inventories"] != 1 || hits["/api/claims/c9/inventories"] != 0 {
+		t.Errorf("requests = %v, want only the player's inventories reread", hits)
+	}
+	var gotWagon *StockInventory
+	for i := range stock.Inventories {
+		if stock.Inventories[i].ID == "deployable:Wagon (III)" {
+			gotWagon = &stock.Inventories[i]
+		}
+	}
+	if gotWagon == nil || !gotWagon.Missing || gotWagon.Counts != nil {
+		t.Errorf("wagon = %+v, want it kept as missing with no ore", gotWagon)
+	}
+
+	// Fresh enough: nothing is read at all.
+	mu.Lock()
+	hits = map[string]int{}
+	mu.Unlock()
+	if _, err := ore.Stock("7", []string{"deployable:Wagon (III)"}, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Errorf("requests = %v, want none while the tracked listing is fresh", hits)
 	}
 }

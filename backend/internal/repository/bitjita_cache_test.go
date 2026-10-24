@@ -120,7 +120,6 @@ func TestSkillRankingsServeStaleWhileRefreshing(t *testing.T) {
 		fmt.Fprintf(w, `{"hit":%d}`, n)
 	}))
 	defer server.Close()
-	defer close(release)
 
 	b, err := NewBitjitaCache(server.URL, t.TempDir(), cache.New(time.Millisecond))
 	if err != nil {
@@ -158,4 +157,15 @@ func TestSkillRankingsServeStaleWhileRefreshing(t *testing.T) {
 	if status != "STALE" || string(fresh) != `{"hit":1}` || time.Since(start) > time.Second {
 		t.Fatalf("fresh load = %q status %q after %v", fresh, status, time.Since(start))
 	}
+
+	// Let the background refresh finish before the temp cache directory is removed.
+	close(release)
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		busy := false
+		b.staleRefreshing.Range(func(_, _ interface{}) bool { busy = true; return false })
+		if !busy {
+			return
+		}
+	}
+	t.Fatal("background refresh did not finish")
 }

@@ -23,7 +23,14 @@ func NewSmithingOreHandler(ore *repository.SmithingOre) http.HandlerFunc {
 		var payload interface{}
 		var err error
 		if view == "stock" {
-			payload, err = ore.Stock(playerID)
+			q := r.URL.Query()
+			var tracked []string
+			for _, id := range strings.Split(q.Get("tracked"), ",") {
+				if id = strings.TrimSpace(id); id != "" {
+					tracked = append(tracked, id)
+				}
+			}
+			payload, err = ore.Stock(playerID, tracked, q.Get("crafts") == "1", q.Get("relist") == "1")
 		} else {
 			payload, err = ore.Get(playerID)
 		}

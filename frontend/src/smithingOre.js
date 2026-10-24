@@ -53,15 +53,27 @@ export function sellValue(book, quantity) {
   return { value, sold: quantity - left }
 }
 
-// Sums the per-tier ore counts of the tracked inventories.
-export function trackedStock(inventories, trackedIds) {
+const emptyTierStock = () => ({ chunks: 0, packages: 0, pieces: 0, concentrates: 0, molten: 0, effortLeft: 0 })
+
+// Sums the per-tier ore counts of the tracked inventories and, when asked, of the player's
+// crafts: a craft's output counts as gathered (finished ingots excepted), and a smithing step
+// still in progress adds the effort it has left.
+export function trackedStock(stock, trackedIds, { crafts = false } = {}) {
   const tracked = new Set((trackedIds ?? []).map(String))
   const total = {}
-  for (const inv of inventories ?? []) {
+  for (const inv of stock?.inventories ?? []) {
     if (!tracked.has(String(inv.id))) continue
     for (const [tier, counts] of Object.entries(inv.counts ?? {})) {
-      total[tier] ??= { chunks: 0, packages: 0, pieces: 0, concentrates: 0, molten: 0 }
+      total[tier] ??= emptyTierStock()
       for (const [kind, n] of Object.entries(counts)) total[tier][kind] = (total[tier][kind] ?? 0) + n
+    }
+  }
+  if (crafts) {
+    for (const craft of stock?.crafts ?? []) {
+      const tier = String(craft.tier)
+      total[tier] ??= emptyTierStock()
+      if (craft.kind !== 'ingots') total[tier][craft.kind] += craft.output
+      total[tier].effortLeft += craft.remainingEffort ?? 0
     }
   }
   return total
@@ -89,10 +101,14 @@ export function orePlanRow(chain, { xpLeft, setup, level, market, stock }) {
   const stockXp = (piecesPerIngot ? (rawPieces / piecesPerIngot) * xpPerIngot : 0)
     + (have.concentrates ?? 0) * (xpForge / chain.concentratesPerIngot)
     + (have.molten ?? 0) * xpForge
+    + (progress > 0 ? ((have.effortLeft ?? 0) / progress) * swingXp : 0)
   const xpStillNeeded = Math.max(0, xpLeft - stockXp)
-  const piecesNeeded = xpPerIngot > 0 ? Math.ceil((xpStillNeeded / xpPerIngot) * piecesPerIngot) : 0
-  const chunks = chain.piecesPerChunk ? Math.ceil(piecesNeeded / chain.piecesPerChunk) : null
-  const chunkEquivalent = (xp) => (xpPerIngot > 0 && chain.piecesPerChunk ? (xp / xpPerIngot) * piecesPerIngot / chain.piecesPerChunk : 0)
+  const piecesFor = (xp) => (xpPerIngot > 0 ? Math.ceil((xp / xpPerIngot) * piecesPerIngot) : 0)
+  const chunksFor = (pieces) => (chain.piecesPerChunk ? Math.ceil(pieces / chain.piecesPerChunk) : 0)
+  const piecesTotal = piecesFor(Math.max(0, xpLeft))
+  const piecesLeft = piecesFor(xpStillNeeded)
+  const chunksTotal = chunksFor(piecesTotal)
+  const chunksLeft = chunksFor(piecesLeft)
   const book = market?.[`item:${chain.ingotId}`]
   const listing = listingPrice(book)
   return {
@@ -106,10 +122,14 @@ export function orePlanRow(chain, { xpLeft, setup, level, market, stock }) {
     xpPerPiece: piecesPerIngot ? xpPerIngot / piecesPerIngot : 0,
     piecesPerIngot,
     ingots,
-    pieces: piecesNeeded,
-    chunks,
-    chunksTotal: chunkEquivalent(Math.max(0, xpLeft)),
-    haveChunks: chunkEquivalent(Math.min(stockXp, Math.max(0, xpLeft))),
+    // Total is what the goal takes from scratch, left is after everything gathered; have is
+    // the difference, so total − have = left always holds.
+    chunksTotal,
+    chunks: chunksLeft,
+    haveChunks: chunksTotal - chunksLeft,
+    piecesTotal,
+    pieces: piecesLeft,
+    havePieces: piecesTotal - piecesLeft,
     stock: have,
     flux: ingots * chain.fluxPerIngot,
     swings,

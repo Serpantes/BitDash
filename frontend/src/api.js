@@ -65,8 +65,12 @@ export async function fetchSmithingOre(playerEntityId) {
   return res.json()
 }
 
-export async function fetchSmithingStock(playerEntityId) {
-  const res = await fetchWithTimeout(`/api/smithing-ore/${playerEntityId}/stock`)
+export async function fetchSmithingStock(playerEntityId, { tracked = [], crafts = false, relist = false } = {}) {
+  const url = new URL(`/api/smithing-ore/${playerEntityId}/stock`, window.location.origin)
+  if (tracked.length) url.searchParams.set('tracked', tracked.join(','))
+  if (crafts) url.searchParams.set('crafts', '1')
+  if (relist) url.searchParams.set('relist', '1')
+  const res = await fetchWithTimeout(url.toString())
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }

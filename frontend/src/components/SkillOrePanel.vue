@@ -12,6 +12,13 @@
         <div v-if="!stock" class="bc-muted-note">{{ stockError || t('ore.pickLoading') }}</div>
         <div v-else-if="!pickerGroups.length" class="bc-muted-note">{{ t('ore.pickEmpty') }}</div>
         <div v-else class="ore-picker-list">
+          <section class="ore-picker-group">
+            <label class="ore-picker-row ore-picker-crafts">
+              <input type="checkbox" :checked="trackCrafts" @change="$emit('update:track-crafts', !trackCrafts)">
+              <span class="ore-picker-name">{{ t('ore.pickCrafts') }}</span>
+              <span class="ore-picker-ore">{{ craftsSummary || t('ore.pickNoCrafts') }}</span>
+            </label>
+          </section>
           <section v-for="group in pickerGroups" :key="group.key" class="ore-picker-group">
             <div class="ore-picker-place">{{ group.title }}</div>
             <label v-for="inv in group.inventories" :key="inv.id" class="ore-picker-row">
@@ -26,13 +33,17 @@
       <template v-else>
         <div v-if="selected" class="ore-hero" :title="rowTitle(selected)">
           <div class="ore-hero-figure">
-            <span class="ore-hero-value">{{ selected.chunks == null ? '—' : formatNumber(selected.chunks) }}</span>
-            <span class="ore-hero-label">{{ chunkLabel(selected) }}</span>
+            <span class="ore-hero-value">{{ formatNumber(selected.chunks) }}</span>
+            <span class="ore-hero-label">{{ t('ore.heroLeft', { chunk: selected.chunkName }) }}</span>
           </div>
-          <div class="ore-hero-figure">
-            <span class="ore-hero-value">{{ moneyText(selected) }}</span>
-            <span class="ore-hero-label">{{ moneyLabel(selected) }}</span>
-          </div>
+          <dl class="ore-hero-facts">
+            <dt>{{ t('ore.heroHave') }}</dt>
+            <dd :title="stockTitle(selected)">{{ tracking ? formatNumber(selected.haveChunks) : '—' }}</dd>
+            <dt>{{ t('ore.heroTotal', { level: targetLevel }) }}</dt>
+            <dd>{{ formatNumber(selected.chunksTotal) }}</dd>
+            <dt>{{ t('ore.heroMoney') }}</dt>
+            <dd :title="moneyLabel(selected)">{{ moneyText(selected) }}</dd>
+          </dl>
           <div class="ore-hero-side">
             T{{ selected.tier }} · {{ formatNumber(selected.ingots) }} × {{ selected.ingotName }}<template v-if="selected.flux"> · {{ formatNumber(selected.flux) }} × {{ t('ore.flux') }}</template> · {{ formatNumber(selected.ingots) }} × {{ selected.logName }}
           </div>
@@ -46,12 +57,8 @@
                 <th class="ore-main" :title="t('ore.colChunksTitle')">{{ t('ore.colChunks') }}</th>
                 <th class="ore-main" :title="t('ore.colMoneyTitle')">{{ t('ore.colMoney') }}</th>
                 <th class="ore-gap" :title="t('ore.colPiecesTitle')">{{ t('ore.colPieces') }}</th>
-                <th v-if="tracking" :title="t('ore.colHaveTitle')">{{ t('ore.colHave') }}</th>
-                <th class="ore-gap" :title="t('ore.colPriceTitle')">{{ t('ore.colPrice') }}</th>
-                <th :title="t('ore.colInstantTitle')">{{ t('ore.colInstant') }}</th>
                 <th>{{ t('ore.colIngots') }}</th>
                 <th>{{ t('ore.colFlux') }}</th>
-                <th :title="t('ore.colSwingTitle')">{{ t('ore.colSwing') }}</th>
                 <th :title="t('ore.colTimeTitle')">{{ t('ore.colTime') }}</th>
               </tr>
             </thead>
@@ -68,15 +75,17 @@
                   <span class="ore-name">{{ row.ingotName.replace(/ Ingot$/, '') }}</span>
                   <span v-if="row.locked" class="ore-lock">{{ lockText(row) }}</span>
                 </td>
-                <td class="ore-main">{{ row.chunks == null ? '—' : formatNumber(row.chunks) }}</td>
+                <td class="ore-main" :title="stockTitle(row)">
+                  {{ formatNumber(row.chunks) }}
+                  <span v-if="row.haveChunks" class="ore-have">{{ t('ore.haveOf', { have: formatNumber(row.haveChunks), total: formatNumber(row.chunksTotal) }) }}</span>
+                </td>
                 <td class="ore-main">{{ moneyText(row) }}</td>
-                <td class="ore-gap">{{ formatNumber(row.pieces) }}</td>
-                <td v-if="tracking" :title="stockTitle(row)">{{ row.haveChunks >= 0.5 ? `≈ ${formatNumber(Math.round(row.haveChunks))}` : '—' }}</td>
-                <td class="ore-gap">{{ row.ingotPrice == null ? '—' : formatNumber(row.ingotPrice) }}</td>
-                <td>{{ row.instantSale.sold ? formatMoney(row.instantSale.value) : '—' }}</td>
+                <td class="ore-gap" :title="stockTitle(row)">
+                  {{ formatNumber(row.pieces) }}
+                  <span v-if="row.havePieces" class="ore-have">{{ t('ore.haveOf', { have: formatNumber(row.havePieces), total: formatNumber(row.piecesTotal) }) }}</span>
+                </td>
                 <td>{{ formatNumber(row.ingots) }}</td>
                 <td>{{ row.flux ? formatNumber(row.flux) : '—' }}</td>
-                <td>{{ formatNumber(row.swingXp) }}</td>
                 <td>{{ formatPlayTime(row.seconds) }}</td>
               </tr>
             </tbody>
@@ -86,7 +95,7 @@
 
       <div class="ore-foot">
         <button type="button" class="ore-track-btn" :class="{ 'ore-track-btn--on': tracking }" @click="picking = !picking">
-          {{ tracking ? t('ore.trackOn', { n: trackedIds.length }) : t('ore.trackOff') }}
+          {{ trackLabel }}
         </button>
         <span>×{{ formatNumber(data.setup.xpRate, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} XP</span>
         <span :title="t('ore.progressTitle')">{{ t('ore.progressShort', { n: formatNumber(data.setup.progressPerSwing), tool: data.setup.tool.name, power: data.setup.tool.power, skill: data.setup.skillPower }) }}</span>
@@ -107,8 +116,11 @@ import { orePlan, readCachedOreData, trackedStock, writeCachedOreData } from '..
 
 // The backend keeps setups and order books fresh within minutes; polling slower is enough.
 const REFRESH_MS = 5 * 60 * 1000
-// Inventories change as ore is gathered and processed, so they are polled more often.
-const STOCK_REFRESH_MS = 2 * 60 * 1000
+// Tracked inventories change as ore is gathered and processed; the backend rereads only their
+// listings, and only when they are a minute old, so polling once a minute costs at most that.
+const STOCK_REFRESH_MS = 60 * 1000
+// The full listing is rebuilt in the background when the picker opens; look again after it.
+const RELIST_SETTLE_MS = 15 * 1000
 const STOCK_KINDS = ['chunks', 'packages', 'pieces', 'concentrates', 'molten']
 
 export default {
@@ -120,8 +132,9 @@ export default {
     targetLevel: { type: Number, default: 100 },
     tier: { type: Number, default: null },
     trackedIds: { type: Array, default: () => [] },
+    trackCrafts: { type: Boolean, default: false },
   },
-  emits: ['update:tier', 'update:tracked'],
+  emits: ['update:tier', 'update:tracked', 'update:track-crafts'],
   setup(props, { emit }) {
     const data = ref(null)
     const error = ref('')
@@ -151,13 +164,13 @@ export default {
       }
       nowMs.value = Date.now()
     }
-    async function loadStock() {
+    async function loadStock({ relist = false } = {}) {
       const id = props.playerEntityId
       if (!id) return
       const key = `${id}:stock`
       stock.value = stock.value ?? readCachedOreData(key)
       try {
-        const fresh = await fetchSmithingStock(id)
+        const fresh = await fetchSmithingStock(id, { tracked: props.trackedIds.map(String), crafts: props.trackCrafts, relist })
         if (id !== props.playerEntityId) return
         stock.value = fresh
         stockError.value = ''
@@ -166,15 +179,30 @@ export default {
         stockError.value = t('ore.loadError', { error: e.message })
       }
     }
+    // Nothing to keep fresh unless something is tracked or the picker is open, and nothing
+    // while the browser tab is hidden.
+    function pollStock() {
+      if (document.visibilityState !== 'visible') return
+      if (props.trackedIds.length || props.trackCrafts || picking.value) loadStock()
+    }
+    let settleTimer = null
+    watch(picking, (open) => {
+      clearTimeout(settleTimer)
+      if (!open) return
+      loadStock({ relist: true })
+      settleTimer = setTimeout(() => { if (picking.value) loadStock() }, RELIST_SETTLE_MS)
+    })
+    watch(() => [props.trackedIds.join(','), props.trackCrafts], () => loadStock())
     onMounted(() => {
       load()
       loadStock()
-      timer = setInterval(load, REFRESH_MS)
-      stockTimer = setInterval(loadStock, STOCK_REFRESH_MS)
+      timer = setInterval(() => { if (document.visibilityState === 'visible') load() }, REFRESH_MS)
+      stockTimer = setInterval(pollStock, STOCK_REFRESH_MS)
     })
     onUnmounted(() => {
       clearInterval(timer)
       clearInterval(stockTimer)
+      clearTimeout(settleTimer)
     })
     watch(() => props.playerEntityId, () => {
       data.value = null
@@ -184,8 +212,22 @@ export default {
     })
 
     const trackedSet = computed(() => new Set(props.trackedIds.map(String)))
-    const tracking = computed(() => props.trackedIds.length > 0)
-    const trackedTotals = computed(() => trackedStock(stock.value?.inventories, props.trackedIds))
+    const tracking = computed(() => props.trackedIds.length > 0 || props.trackCrafts)
+    const trackedTotals = computed(() => trackedStock(stock.value, props.trackedIds, { crafts: props.trackCrafts }))
+    const trackLabel = computed(() => {
+      if (!tracking.value) return t('ore.trackOff')
+      const parts = []
+      if (props.trackedIds.length) parts.push(t('ore.trackOn', { n: props.trackedIds.length }))
+      if (props.trackCrafts) parts.push(t('ore.trackCrafts'))
+      return parts.join(' · ')
+    })
+    const craftsSummary = computed(() => (stock.value?.crafts ?? [])
+      .map((craft) => t('ore.craftLine', {
+        tier: craft.tier,
+        what: t(`ore.kind.${craft.kind}`, { n: formatNumber(craft.output) }),
+        where: craft.building,
+      }))
+      .join(' · '))
     function toggleTracked(id) {
       const next = trackedSet.value.has(id)
         ? props.trackedIds.filter((x) => String(x) !== id)
@@ -196,12 +238,14 @@ export default {
       const groups = new Map()
       for (const inv of stock.value?.inventories ?? []) {
         const hasOre = Object.keys(inv.counts ?? {}).length > 0
-        if (!showAllInventories.value && !hasOre && !trackedSet.value.has(inv.id)) continue
-        const key = `${inv.source}:${inv.place ?? ''}`
+        // Wagons and caches are the player's own storage, so they are listed even while empty.
+        const alwaysShown = inv.source === 'deployable' || trackedSet.value.has(inv.id)
+        if (!showAllInventories.value && !hasOre && !alwaysShown) continue
+        const key = `${inv.source}:${inv.source === 'claim' || inv.source === 'house' ? inv.place ?? '' : ''}`
         if (!groups.has(key)) {
           const title = inv.source === 'claim' || inv.source === 'house'
             ? inv.place
-            : t('ore.pickPlayer')
+            : t(inv.source === 'deployable' ? 'ore.pickDeployables' : 'ore.pickPlayer')
           groups.set(key, { key, title, inventories: [] })
         }
         groups.get(key).inventories.push({
@@ -209,9 +253,20 @@ export default {
           name: inv.source === 'player' && inv.place ? `${inv.name} · ${inv.place}` : inv.name,
         })
       }
+      // Tracked inventories the listing no longer has (renamed, moved or gone) stay untickable.
+      const listed = new Set((stock.value?.inventories ?? []).map((inv) => String(inv.id)))
+      const gone = stock.value ? props.trackedIds.map(String).filter((id) => !listed.has(id)) : []
+      if (gone.length) {
+        groups.set('gone', {
+          key: 'gone',
+          title: t('ore.pickGone'),
+          inventories: gone.map((id) => ({ id, name: id, missing: true })),
+        })
+      }
       return [...groups.values()]
     })
     function oreSummary(inv) {
+      if (inv.missing) return t('ore.pickEmptyInventory')
       return Object.entries(inv.counts ?? {})
         .sort(([a], [b]) => Number(b) - Number(a))
         .map(([tier, counts]) => `T${tier} ${STOCK_KINDS
@@ -248,18 +303,11 @@ export default {
         price: formatNumber(row.ingotPrice),
       })
     }
-    function chunkLabel(row) {
-      if (!tracking.value || row.haveChunks < 0.5) return row.chunkName
-      return t('ore.chunksLeft', {
-        chunk: row.chunkName,
-        have: formatNumber(Math.round(row.haveChunks)),
-        total: formatNumber(Math.ceil(row.chunksTotal)),
-      })
-    }
     function stockTitle(row) {
       const parts = STOCK_KINDS
         .filter((kind) => row.stock?.[kind])
         .map((kind) => t(`ore.kind.${kind}`, { n: formatNumber(row.stock[kind]) }))
+      if (row.stock?.effortLeft) parts.push(t('ore.effortLeft', { n: formatNumber(row.stock.effortLeft) }))
       return parts.length ? t('ore.haveTitle', { parts: parts.join(', ') }) : ''
     }
     function lockText(row) {
@@ -285,7 +333,7 @@ export default {
     return {
       data, error, rows, selected, marketAge,
       stock, stockError, picking, showAllInventories, tracking, trackedSet, pickerGroups,
-      toggleTracked, oreSummary, chunkLabel, stockTitle,
+      toggleTracked, oreSummary, stockTitle, trackLabel, craftsSummary,
       moneyText, moneyLabel, lockText, rowTitle,
       formatMoney, formatNumber, formatPlayTime, formatXpCompact, t,
     }
@@ -296,7 +344,7 @@ export default {
 <style scoped>
 .ore { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 
-.ore-hero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 20px; padding: 2px 2px 0; }
+.ore-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px 20px; padding: 2px 2px 0; }
 .ore-hero-figure { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ore-hero-value { font-size: 34px; font-weight: 800; line-height: 1; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ore-hero-label, .ore-hero-side {
@@ -307,6 +355,16 @@ export default {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ore-hero-facts {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 1px 10px;
+  margin: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ore-hero-facts dt { color: var(--muted); }
+.ore-hero-facts dd { margin: 0; font-weight: 800; color: var(--text); text-align: right; }
 .ore-hero-side { grid-column: 1 / -1; }
 
 .ore-table-wrap { flex: 1; min-height: 0; overflow: auto; }
@@ -335,6 +393,7 @@ export default {
 .ore-table th.ore-main { color: var(--text-soft); }
 .ore-table td.ore-main { font-size: 14px; font-weight: 800; color: var(--text); }
 .ore-table .ore-gap { padding-left: 18px; }
+.ore-have { display: block; font-size: 10px; font-weight: 600; color: var(--muted); }
 .ore-table .ore-col-name { text-align: left; }
 .ore-table tbody tr { cursor: pointer; }
 .ore-table tbody tr:hover td { background: rgba(233, 223, 196, 0.04); }
@@ -375,6 +434,7 @@ export default {
 }
 .ore-picker-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; font-size: 12px; cursor: pointer; }
 .ore-picker-row input { align-self: center; }
+.ore-picker-crafts .ore-picker-name { font-weight: 700; }
 .ore-picker-name { color: var(--text); white-space: nowrap; }
 .ore-picker-ore { min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

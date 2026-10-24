@@ -105,6 +105,8 @@
         :target-level="progress.targetLevel"
         :tier="oreTier"
         :tracked-ids="oreInventories"
+        :track-crafts="oreTrackCrafts"
+        @update:track-crafts="$emit('update-view', { skillOreTrackCrafts: $event })"
         @update:tier="$emit('update-view', { skillOreTier: $event })"
         @update:tracked="$emit('update-view', { skillOreInventories: $event })"
       />
@@ -163,6 +165,7 @@ export default {
     pacePeriod: { type: String, default: '7d' },
     oreTier: { type: Number, default: null },
     oreInventories: { type: Array, default: () => [] },
+    oreTrackCrafts: { type: Boolean, default: false },
   },
   emits: ['update-view'],
   setup(props) {

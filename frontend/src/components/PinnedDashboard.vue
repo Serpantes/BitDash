@@ -189,6 +189,7 @@
             :pace-period="item.skillPacePeriod"
             :ore-tier="item.skillOreTier ?? null"
             :ore-inventories="item.skillOreInventories ?? []"
+            :ore-track-crafts="Boolean(item.skillOreTrackCrafts)"
             @update-view="updatePinnedBlock(item.inventoryId, $event)"
           />
 

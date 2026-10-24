@@ -153,6 +153,7 @@ type SmithingOre struct {
 	setups  map[string]*smithingSetupEntry
 
 	stockTTL time.Duration
+	listTTL  time.Duration
 	stockMu  sync.Mutex
 	stocks   map[string]*smithingStockEntry
 }
@@ -163,7 +164,8 @@ func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *S
 		setupTTL:  setupTTL,
 		marketTTL: marketTTL,
 		setups:    map[string]*smithingSetupEntry{},
-		stockTTL:  2 * time.Minute,
+		stockTTL:  time.Minute,
+		listTTL:   30 * time.Minute,
 		stocks:    map[string]*smithingStockEntry{},
 	}
 }
