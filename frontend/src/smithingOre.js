@@ -25,46 +25,22 @@ export function writeCachedOreData(playerEntityId, data) {
   }
 }
 
-// Asks far above the usual price are listings nobody fills; they are neither bought nor used
-// to price the part of the need the market cannot cover.
+// Asks this far below the median order are dumps or typos, not the price ingots sell at.
 const OUTLIER_FACTOR = 3
 
-// Price at which half of the sensibly priced quantity is on sale. Outliers are cut against the
-// median order first, so a few huge listings at absurd prices cannot drag it up.
-export function typicalPrice(levels) {
-  if (!levels.length) return null
-  const medianOrder = levels[Math.floor((levels.length - 1) / 2)][0]
-  const sane = levels.filter(([price]) => price <= medianOrder * OUTLIER_FACTOR)
-  const total = sane.reduce((sum, [, qty]) => sum + qty, 0)
-  let seen = 0
-  for (const [price, qty] of sane) {
-    seen += qty
-    if (seen * 2 >= total) return price
+// Price to list ingots at: the cheapest ask, skipping undercuts far below the usual asks.
+// With no asks at all, the best bid is the only price on the market.
+export function listingPrice(book) {
+  const asks = book?.sell ?? []
+  if (asks.length) {
+    const medianAsk = asks[Math.floor((asks.length - 1) / 2)][0]
+    return { price: asks.find(([price]) => price * OUTLIER_FACTOR >= medianAsk)[0], fromBids: false }
   }
-  return medianOrder
+  const bid = book?.buy?.[0]?.[0]
+  return bid ? { price: bid, fromBids: true } : null
 }
 
-// Buys the sensible sell orders cheapest first; whatever the market cannot cover is priced at
-// the typical price.
-export function buyCost(book, quantity) {
-  const levels = book?.sell ?? []
-  if (!levels.length || quantity <= 0) return quantity > 0 ? null : { cost: 0, onSale: 0, partial: false }
-  const typical = typicalPrice(levels)
-  let left = quantity
-  let cost = 0
-  for (const [price, qty] of levels) {
-    if (price > typical * OUTLIER_FACTOR) break
-    const take = Math.min(left, qty)
-    cost += take * price
-    left -= take
-    if (left <= 0) break
-  }
-  const onSale = quantity - left
-  if (left > 0) cost += left * typical
-  return { cost, onSale, partial: left > 0, typical }
-}
-
-// What the crafted ingots fetch right away from standing buy orders.
+// What the ingots fetch right away from standing buy orders.
 export function sellValue(book, quantity) {
   let left = quantity
   let value = 0
@@ -75,12 +51,6 @@ export function sellValue(book, quantity) {
     if (left <= 0) break
   }
   return { value, sold: quantity - left }
-}
-
-function marketPart(market, kind, id, quantity) {
-  if (!id || quantity <= 0) return null
-  const book = market?.[`${kind}:${id}`]
-  return { quantity, lowest: book?.sell?.[0]?.[0] ?? null, ...(buyCost(book, quantity) ?? { cost: null, onSale: 0, partial: false }) }
 }
 
 export function orePlanRow(chain, { xpLeft, setup, level, market }) {
@@ -94,21 +64,14 @@ export function orePlanRow(chain, { xpLeft, setup, level, market }) {
   const lockedByLevel = level < chain.levelRequired
   const lockedByTool = (setup.tool?.level ?? 0) < chain.toolLevelRequired
   const chunks = chain.piecesPerChunk ? Math.ceil((ingots * piecesPerIngot) / chain.piecesPerChunk) : null
-  // High-tier chunks often have no sellers while their ore pieces do; price whichever is on sale.
-  const chunkBuy = marketPart(market, 'cargo', chain.chunkCargoId, chunks ?? 0)
-  const pieceBuy = marketPart(market, 'item', chain.pieceItemId, ingots * piecesPerIngot)
-  const parts = {
-    chunks: chunkBuy?.cost == null && pieceBuy?.cost != null ? { ...pieceBuy, asPieces: true } : chunkBuy,
-    logs: marketPart(market, 'item', chain.logItemId, ingots),
-    flux: marketPart(market, 'item', chain.fluxItemId, ingots * chain.fluxPerIngot),
-  }
-  const priced = Object.values(parts).filter((p) => p?.cost != null)
+  const book = market?.[`item:${chain.ingotId}`]
+  const listing = listingPrice(book)
   return {
     ...chain,
-    parts,
-    money: parts.chunks?.cost != null ? priced.reduce((sum, p) => sum + p.cost, 0) : null,
-    moneyPartial: priced.some((p) => p.partial) || Object.values(parts).some((p) => p && p.cost == null),
-    ingotSale: sellValue(market?.[`item:${chain.ingotId}`], ingots),
+    ingotPrice: listing?.price ?? null,
+    priceFromBids: Boolean(listing?.fromBids),
+    money: listing ? ingots * listing.price : null,
+    instantSale: sellValue(book, ingots),
     swingXp,
     xpPerIngot,
     xpPerPiece: piecesPerIngot ? xpPerIngot / piecesPerIngot : 0,

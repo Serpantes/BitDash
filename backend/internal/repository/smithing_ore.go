@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,7 +20,7 @@ import (
 const (
 	smithingSkillID      = 6
 	smithingChainsFile   = "smithing-ore-chains.json"
-	smithingChainsFormat = 3
+	smithingChainsFormat = 4
 	smithingMarketFile   = "smithing-ore-market.json"
 	smithingMarketDepth  = 60
 
@@ -42,11 +41,7 @@ var smithingIngotTiers = []struct {
 type IngotChain struct {
 	Tier                 int     `json:"tier"`
 	IngotID              string  `json:"ingotId"`
-	ChunkCargoID         string  `json:"chunkCargoId,omitempty"`
-	PieceItemID          string  `json:"pieceItemId"`
-	LogItemID            string  `json:"logItemId,omitempty"`
 	LogName              string  `json:"logName,omitempty"`
-	FluxItemID           string  `json:"fluxItemId,omitempty"`
 	IngotName            string  `json:"ingotName"`
 	IngotIcon            string  `json:"ingotIcon,omitempty"`
 	PieceName            string  `json:"pieceName"`
@@ -80,8 +75,8 @@ type SmithingSetup struct {
 	FetchedAt        int64         `json:"fetchedAt"`
 }
 
-// MarketBook holds the cheapest sell orders (ascending) and the best buy orders (descending)
-// as [price, quantity] pairs, across all regions.
+// MarketBook holds an ingot's cheapest sell orders (ascending) and best buy orders
+// (descending) as [price, quantity] pairs, across all regions.
 type MarketBook struct {
 	Sell [][2]float64 `json:"sell"`
 	Buy  [][2]float64 `json:"buy"`
@@ -324,7 +319,6 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 		IngotName:            ingot.Item.Name,
 		IngotIcon:            ingot.Item.IconAssetName,
 		PieceName:            piece.Name,
-		PieceItemID:          string(piece.ID),
 		LevelRequired:        1,
 		SwingTime:            forge.TimeRequirement,
 		ForgeEffort:          forge.ActionsRequired,
@@ -345,17 +339,13 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 	}
 	if flux := findConsumed(forge, func(n string) bool { return strings.Contains(n, "Flux") }); flux != nil {
 		chain.FluxPerIngot = flux.Quantity
-		chain.FluxItemID = string(flux.ID)
 	}
 	if fuel := findConsumed(smelt, func(n string) bool { return !strings.Contains(n, "Concentrate") }); fuel != nil {
-		chain.LogItemID = string(fuel.ID)
 		chain.LogName = fuel.Name
 	}
 	if split := findRecipe(pieceItem, string(piece.ID), "Extract"); split != nil {
 		if len(split.ConsumedItems) > 0 {
 			chain.ChunkName = split.ConsumedItems[0].Name
-			// Recipes reference cargo under ids that differ from the market's, so match by name.
-			chain.ChunkCargoID = s.cargoIDByName(chain.ChunkName)
 		}
 		for _, out := range split.CraftedItems {
 			if out.ID == piece.ID {
@@ -518,28 +508,6 @@ func buildSmithingSetup(statsBody, invBody []byte, now time.Time) (*SmithingSetu
 	return setup, nil
 }
 
-func (s *SmithingOre) cargoIDByName(name string) string {
-	body, status, _, err := s.bitjita.GetAPI("/cargo", "q="+url.QueryEscape(name))
-	if err != nil || status != http.StatusOK {
-		return ""
-	}
-	var res struct {
-		Cargos []struct {
-			ID   flexibleID `json:"id"`
-			Name string     `json:"name"`
-		} `json:"cargos"`
-	}
-	if json.Unmarshal(body, &res) != nil {
-		return ""
-	}
-	for _, c := range res.Cargos {
-		if c.Name == name {
-			return string(c.ID)
-		}
-	}
-	return ""
-}
-
 func (s *SmithingOre) marketGoods() []string {
 	chains, err := s.Chains()
 	if err != nil {
@@ -555,10 +523,6 @@ func (s *SmithingOre) marketGoods() []string {
 		keys = append(keys, kind+":"+id)
 	}
 	for _, c := range chains {
-		add("cargo", c.ChunkCargoID)
-		add("item", c.PieceItemID)
-		add("item", c.LogItemID)
-		add("item", c.FluxItemID)
 		add("item", c.IngotID)
 	}
 	return keys
@@ -604,8 +568,11 @@ func (s *SmithingOre) refreshMarket() error {
 	s.marketMu.Lock()
 	// Keep the last known book for goods whose refresh failed this round.
 	if s.market != nil {
-		for key, book := range s.market.Books {
-			if _, ok := books[key]; !ok {
+		for _, key := range keys {
+			if _, ok := books[key]; ok {
+				continue
+			}
+			if book, ok := s.market.Books[key]; ok {
 				books[key] = book
 			}
 		}

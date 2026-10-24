@@ -26,10 +26,10 @@
                 <th class="ore-col-name">{{ t('ore.colTier') }}</th>
                 <th class="ore-main" :title="t('ore.colChunksTitle')">{{ t('ore.colChunks') }}</th>
                 <th class="ore-main" :title="t('ore.colMoneyTitle')">{{ t('ore.colMoney') }}</th>
-                <th class="ore-gap" :title="t('ore.colChunkPriceTitle')">{{ t('ore.colChunkPrice') }}</th>
+                <th class="ore-gap" :title="t('ore.colPriceTitle')">{{ t('ore.colPrice') }}</th>
+                <th :title="t('ore.colInstantTitle')">{{ t('ore.colInstant') }}</th>
                 <th>{{ t('ore.colIngots') }}</th>
                 <th>{{ t('ore.colFlux') }}</th>
-                <th :title="t('ore.colSaleTitle')">{{ t('ore.colSale') }}</th>
                 <th :title="t('ore.colSwingTitle')">{{ t('ore.colSwing') }}</th>
                 <th :title="t('ore.colTimeTitle')">{{ t('ore.colTime') }}</th>
               </tr>
@@ -49,10 +49,10 @@
                 </td>
                 <td class="ore-main">{{ row.chunks == null ? '—' : formatNumber(row.chunks) }}</td>
                 <td class="ore-main">{{ moneyText(row) }}</td>
-                <td class="ore-gap">{{ unitPriceText(row) }}</td>
+                <td class="ore-gap">{{ row.ingotPrice == null ? '—' : formatNumber(row.ingotPrice) }}</td>
+                <td>{{ row.instantSale.sold ? formatMoney(row.instantSale.value) : '—' }}</td>
                 <td>{{ formatNumber(row.ingots) }}</td>
                 <td>{{ row.flux ? formatNumber(row.flux) : '—' }}</td>
-                <td>{{ row.ingotSale.sold ? formatMoney(row.ingotSale.value) : '—' }}</td>
                 <td>{{ formatNumber(row.swingXp) }}</td>
                 <td>{{ formatPlayTime(row.seconds) }}</td>
               </tr>
@@ -138,52 +138,38 @@ export default {
 
     const formatMoney = (value) => formatXpShort(Math.round(value))
     function moneyText(row) {
-      if (row.money == null) return '—'
-      return `${row.moneyPartial ? '≈ ' : ''}${formatMoney(row.money)}`
+      return row.money == null ? '—' : formatMoney(row.money)
     }
     function moneyLabel(row) {
-      if (row.money == null) return t('ore.moneyNone', { chunk: row.chunkName })
-      return row.parts.chunks?.asPieces ? t('ore.moneyViaPieces') : t('ore.moneyLabel')
-    }
-    function unitPriceText(row) {
-      const part = row.parts.chunks
-      if (part?.lowest == null) return '—'
-      return part.asPieces ? t('ore.perPiece', { price: formatNumber(part.lowest) }) : formatNumber(part.lowest)
+      if (row.money == null) return t('ore.moneyNone', { ingot: row.ingotName })
+      return t(row.priceFromBids ? 'ore.moneyLabelBids' : 'ore.moneyLabel', {
+        n: formatNumber(row.ingots),
+        price: formatNumber(row.ingotPrice),
+      })
     }
     function lockText(row) {
       return row.lockedByLevel ? t('ore.needLevel', { level: row.levelRequired }) : t('ore.needTool', { level: row.toolLevelRequired })
     }
-    function partLine(name, part) {
-      if (!part) return null
-      if (part.cost == null) return t('ore.partNone', { name, n: formatNumber(part.quantity) })
-      return t('ore.partLine', {
-        name,
-        n: formatNumber(part.quantity),
-        cost: formatNumber(Math.round(part.cost)),
-        onSale: formatNumber(part.onSale),
-      })
-    }
     function rowTitle(row) {
-      const chunkName = row.parts.chunks?.asPieces ? row.pieceName : row.chunkName
-      return [
-        t('ore.rowTitle', {
-          ingot: row.ingotName,
-          conc: row.concentratesPerIngot,
-          pieces: row.piecesPerIngot,
-          piece: row.pieceName,
-          perPiece: formatNumber(Math.round(row.xpPerPiece)),
-          perChunk: row.piecesPerChunk,
-          chunk: row.chunkName,
-        }),
-        partLine(chunkName, row.parts.chunks),
-        partLine(row.logName, row.parts.logs),
-        partLine(t('ore.flux'), row.parts.flux),
-      ].filter(Boolean).join('\n')
+      const lines = [t('ore.rowTitle', {
+        ingot: row.ingotName,
+        conc: row.concentratesPerIngot,
+        pieces: row.piecesPerIngot,
+        piece: row.pieceName,
+        perPiece: formatNumber(Math.round(row.xpPerPiece)),
+        perChunk: row.piecesPerChunk,
+        chunk: row.chunkName,
+      })]
+      if (row.money != null) lines.push(moneyLabel(row))
+      lines.push(row.instantSale.sold
+        ? t('ore.instantLine', { sold: formatNumber(row.instantSale.sold), value: formatNumber(Math.round(row.instantSale.value)) })
+        : t('ore.instantNone'))
+      return lines.join('\n')
     }
 
     return {
       data, error, rows, selected, marketAge,
-      moneyText, moneyLabel, unitPriceText, lockText, rowTitle,
+      moneyText, moneyLabel, lockText, rowTitle,
       formatMoney, formatNumber, formatPlayTime, formatXpCompact, t,
     }
   },
