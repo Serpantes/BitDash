@@ -59,6 +59,12 @@ export async function fetchMarketCatalog() {
   return res.json()
 }
 
+export async function fetchSmithingOre(playerEntityId) {
+  const res = await fetchWithTimeout(`/api/smithing-ore/${playerEntityId}`)
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  return res.json()
+}
+
 export async function fetchXpHistory(playerEntityId, since = 0) {
   const url = new URL(`/api/xp-history/${playerEntityId}`, window.location.origin)
   if (since) url.searchParams.set('since', String(since))

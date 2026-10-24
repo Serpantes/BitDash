@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,5 +102,52 @@ func TestBitjitaGetAPIFreshBypassesLiveCache(t *testing.T) {
 	after, _, _, _ := b.GetAPI("/leaderboard/skills", "sortBy=2")
 	if string(after) != `{"hit":2}` || hits != 2 {
 		t.Fatalf("expected refreshed cache, got %q after %d hits", after, hits)
+	}
+}
+
+func TestSkillRankingsServeStaleWhileRefreshing(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		n := hits
+		mu.Unlock()
+		if n > 1 {
+			<-release
+		}
+		fmt.Fprintf(w, `{"hit":%d}`, n)
+	}))
+	defer server.Close()
+	defer close(release)
+
+	b, err := NewBitjitaCache(server.URL, t.TempDir(), cache.New(time.Millisecond))
+	if err != nil {
+		t.Fatalf("NewBitjitaCache: %v", err)
+	}
+	if got := BitjitaCachePolicy("/players/7/skill-rankings", ""); got != "stale" {
+		t.Fatalf("skill rankings policy = %q, want stale", got)
+	}
+
+	first, _, status, _ := b.GetAPI("/players/7/skill-rankings", "")
+	if status != "MISS" || string(first) != `{"hit":1}` {
+		t.Fatalf("first load = %q status %q", first, status)
+	}
+	time.Sleep(5 * time.Millisecond)
+
+	// The upstream now hangs: the stored answer must still come back at once.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		again, _, status, _ := b.GetAPI("/players/7/skill-rankings", "")
+		if status != "STALE" || string(again) != `{"hit":1}` {
+			t.Errorf("stale load = %q status %q", again, status)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stale answer waited on the upstream")
 	}
 }

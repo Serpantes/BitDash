@@ -92,11 +92,20 @@
         <div class="bc-seg">
           <button type="button" class="bc-seg-btn" :class="{ active: activeTab === 'pace' }" @click="$emit('update-view', { skillChartTab: 'pace' })">{{ t('skillCard.activityTab') }}</button>
           <button type="button" class="bc-seg-btn" :class="{ active: activeTab === 'curve' }" @click="$emit('update-view', { skillChartTab: 'curve' })">{{ t('skillCard.curveTab') }}</button>
+          <button v-if="hasOreTab" type="button" class="bc-seg-btn" :class="{ active: activeTab === 'ore' }" @click="$emit('update-view', { skillChartTab: 'ore' })">{{ t('skillCard.oreTab') }}</button>
         </div>
         <span v-if="activeTab === 'curve'" class="skill-chart-sub">{{ t('skillCard.curveSub') }}</span>
+        <span v-else-if="activeTab === 'ore'" class="skill-chart-sub">{{ t('skillCard.oreSub', { level: progress.targetLevel }) }}</span>
       </div>
+      <SkillOrePanel
+        v-if="activeTab === 'ore'"
+        :player-entity-id="playerEntityId"
+        :xp-left="progress.toTarget"
+        :level="progress.level"
+        :target-level="progress.targetLevel"
+      />
       <SkillActivityPanel
-        v-if="activeTab === 'pace'"
+        v-else-if="activeTab === 'pace'"
         :points="history"
         :level-table="levelTable"
         :now="nowSec"
@@ -123,22 +132,26 @@ import { activePace, forecastEta, formatDate, formatEta, formatPlayTime, formatU
 import { formatNumber, t } from '../i18n'
 import SkillCurveChart from './SkillCurveChart.vue'
 import SkillActivityPanel from './SkillActivityPanel.vue'
+import SkillOrePanel from './SkillOrePanel.vue'
+import { SMITHING_SKILL_ID } from '../smithingOre'
 
 const NOW_TICK_MS = 15000
 
 export default {
   name: 'SkillProgressCard',
-  components: { SkillActivityPanel, SkillCurveChart },
+  components: { SkillActivityPanel, SkillCurveChart, SkillOrePanel },
   props: {
     levelTable: { type: Array, default: null },
     xp: { type: Number, default: 0 },
     rank: { type: Number, default: null },
+    rankLoading: { type: Boolean, default: false },
     totalPlayers: { type: Number, default: null },
     above: { type: Object, default: null },
     rankScope: { type: String, default: 'all' },
     activeRanking: { type: Object, default: null },
     activeDays: { type: Number, default: 30 },
     skillId: { type: [String, Number], default: null },
+    playerEntityId: { type: String, default: null },
     size: { type: String, default: 'small' },
     history: { type: Array, default: null },
     trackedSince: { type: Number, default: null },
@@ -154,7 +167,12 @@ export default {
 
     const progress = computed(() => skillProgress(props.levelTable, props.xp))
     const pathTicks = computed(() => (progress.value ? targetPathTicks(props.levelTable, progress.value.targetLevel) : []))
-    const activeTab = computed(() => (props.chartTab === 'curve' ? 'curve' : 'pace'))
+    const hasOreTab = computed(() => Number(props.skillId) === SMITHING_SKILL_ID)
+    const activeTab = computed(() => {
+      if (props.chartTab === 'curve') return 'curve'
+      if (props.chartTab === 'ore' && hasOreTab.value) return 'ore'
+      return 'pace'
+    })
     const playPace = computed(() => activePace(props.history, nowSec.value, 7 * 86400) ?? activePace(props.history, nowSec.value, null))
     const etaFor = (remaining) => (playPace.value?.perHour > 0 ? formatPlayTime((remaining / playPace.value.perHour) * 3600) : '')
     const etaNext = computed(() => (progress.value && !progress.value.isMax ? etaFor(progress.value.toNext) : ''))
@@ -207,12 +225,12 @@ export default {
       const active = scope === 'active'
       const src = active
         ? (props.activeRanking ?? { loading: true })
-        : { rank: props.rank, totalPlayers: props.totalPlayers, above: props.above }
+        : { rank: props.rank, totalPlayers: props.totalPlayers, above: props.above, loading: props.rankLoading }
       const rank = src.rank ?? null
       const total = src.totalPlayers ?? null
       let meta = t('skillCard.notRanked')
       if (rank) meta = total ? t('skillCard.ofTotal', { total: formatCount(total), top: formatTopPct((rank / total) * 100) }) : ''
-      else if (active && src.loading) meta = t('skillCard.loading')
+      else if (src.loading) meta = t('skillCard.loading')
       else if (active && props.xp > 0) meta = t('skillCard.inactive', { days: props.activeDays })
       return {
         scope,
@@ -244,7 +262,7 @@ export default {
     }
 
     return {
-      nowSec, progress, pathTicks, activeTab, etaNext, etaTarget, etaTitle, targetForecast, rankTitle,
+      nowSec, progress, pathTicks, hasOreTab, activeTab, etaNext, etaTarget, etaTitle, targetForecast, rankTitle,
       isActiveScope, rankFaces, rankFace,
       formatCount, formatSkillPct, formatTopPct, formatXpCompact,
     }

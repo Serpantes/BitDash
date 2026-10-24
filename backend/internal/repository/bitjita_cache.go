@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"bitdash/backend/internal/cache"
@@ -20,6 +21,9 @@ type BitjitaCache struct {
 	apiFiles   *FileCache
 	iconFiles  *FileCache
 	liveMemory *cache.Cache
+
+	// Background refreshes of "stale" paths currently in flight, keyed by memory key.
+	staleRefreshing sync.Map
 }
 
 func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*BitjitaCache, error) {
@@ -57,7 +61,23 @@ func bitjitaCachePolicy(path, query string) string {
 	if isNumericDetailPath(path, "/items/") || isNumericDetailPath(path, "/cargo/") {
 		return "permanent"
 	}
+	if isSlowRankingPath(path) {
+		return "stale"
+	}
 	return "live"
+}
+
+// BitJita computes skill rankings and leaderboards on demand and can take close to a minute,
+// so the last good answer is served at once while a fresh one is fetched in the background.
+func isSlowRankingPath(path string) bool {
+	if path == "/leaderboard/skills" {
+		return true
+	}
+	return strings.HasPrefix(path, "/players/") && strings.HasSuffix(path, "/skill-rankings")
+}
+
+func staleDiskKey(path, query string) string {
+	return "stale_" + apiDiskKey(path, query)
 }
 
 func isStaticPath(path string) bool {
@@ -135,6 +155,25 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 		}
 	}
 
+	if policy == "stale" {
+		staleKey := staleDiskKey(path, query)
+		stale, haveStale := b.apiFiles.Get(staleKey)
+		if haveStale && !fresh {
+			b.refreshStale(path, query, memKey, staleKey)
+			return stale, http.StatusOK, "STALE", nil
+		}
+		body, status, err = b.fetchUpstream(path, query)
+		if err == nil && status >= 200 && status < 300 {
+			b.liveMemory.Set(memKey, body)
+			_ = b.apiFiles.Set(staleKey, body)
+			return body, status, "MISS", nil
+		}
+		if haveStale {
+			return stale, http.StatusOK, "STALE", nil
+		}
+		return body, status, "MISS", err
+	}
+
 	body, status, err = b.fetchUpstream(path, query)
 	if err != nil {
 		return nil, status, "", err
@@ -148,6 +187,21 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 		}
 	}
 	return body, status, "MISS", nil
+}
+
+func (b *BitjitaCache) refreshStale(path, query, memKey, staleKey string) {
+	if _, running := b.staleRefreshing.LoadOrStore(memKey, true); running {
+		return
+	}
+	go func() {
+		defer b.staleRefreshing.Delete(memKey)
+		body, status, err := b.fetchUpstream(path, query)
+		if err != nil || status < 200 || status >= 300 {
+			return
+		}
+		b.liveMemory.Set(memKey, body)
+		_ = b.apiFiles.Set(staleKey, body)
+	}()
 }
 
 func (b *BitjitaCache) fetchUpstream(path, query string) ([]byte, int, error) {

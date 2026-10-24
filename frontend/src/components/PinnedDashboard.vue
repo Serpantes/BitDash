@@ -174,12 +174,14 @@
             :level-table="levelTable"
             :xp="skillXp(item)"
             :rank="state[item.inventoryId]?.skillRanking?.rank ?? null"
+            :rank-loading="Boolean(state[item.inventoryId]?.loading)"
             :total-players="state[item.inventoryId]?.skillRanking?.totalPlayers ?? null"
             :above="state[item.inventoryId]?.skillAbove ?? null"
             :rank-scope="skillRankScope(item)"
             :active-ranking="skillActiveRanking(item)"
             :active-days="ACTIVE_DAYS"
             :skill-id="item.skillId"
+            :player-entity-id="item.playerEntityId ? String(item.playerEntityId) : null"
             :size="skillTileSize(item.inventoryId)"
             :history="skillHistory(item)"
             :tracked-since="skillTrackedSince(item)"
@@ -1536,7 +1538,8 @@ export default {
       if (isPlannerBlock(item)) return !item.plannerTarget?.id
       if (isMarketBlock(item)) return false
       if (isCharacterBlock(item)) return !state[item.inventoryId]?.characterStats
-      if (isSkillBlock(item)) return !state[item.inventoryId]?.skillRanking || !levelTable.value
+      // Rankings can take BitJita close to a minute; level and XP come from live data and history.
+      if (isSkillBlock(item)) return !levelTable.value || (!state[item.inventoryId]?.skillRanking && !skillXp(item))
       return !hasInventoryGrid(item.inventoryId)
     }
     function formatBig(value) {
