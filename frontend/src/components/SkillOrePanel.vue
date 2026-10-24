@@ -98,6 +98,15 @@
             <div class="bc-bar-track"><div class="bc-bar-fill" :style="{ width: `${gatheredPct}%` }"></div></div>
             <span class="bc-bar-text">{{ formatNumber(selected.haveChunks) }} / {{ formatNumber(selected.chunksTotal) }}</span>
           </div>
+          <div v-if="tracking" class="ore-speed" :title="t('ore.speedTitle')">
+            <span class="ore-speed-label">{{ t('ore.speed') }}</span>
+            <template v-if="speed">
+              <span class="ore-speed-value">{{ t('ore.speedValue', { n: formatNumber(Math.round(speed.perHour)) }) }}</span>
+              <span v-if="speed.perHour >= 1" class="ore-speed-eta">{{ t('ore.speedEta', { time: formatPlayTime((selected.chunks / speed.perHour) * 3600) }) }}</span>
+              <span v-else class="ore-speed-eta">{{ t('ore.speedIdle') }}</span>
+            </template>
+            <span v-else class="ore-speed-eta">{{ t('ore.speedWarmup') }}</span>
+          </div>
 
           <template v-if="places.length">
             <div class="ore-places-title">{{ t('ore.wherePlaces') }}</div>
@@ -132,13 +141,22 @@ import { fetchSmithingOre, fetchSmithingStock } from '../api'
 import { formatNumber, t } from '../i18n'
 import { formatSkillPct, formatXpShort } from '../skillProgress'
 import { formatPlayTime } from '../xpHistory'
-import { orePlan, readCachedOreData, stockAsChunks, trackedStock, writeCachedOreData } from '../smithingOre'
+import {
+  appendGatherSample,
+  gatherRate,
+  orePlan,
+  rawChunks,
+  readCachedOreData,
+  stockAsChunks,
+  trackedStock,
+  writeCachedOreData,
+} from '../smithingOre'
 
 // The backend keeps setups and order books fresh within minutes; polling slower is enough.
 const REFRESH_MS = 5 * 60 * 1000
 // Tracked inventories change as ore is gathered and processed; the backend rereads only their
-// listings, and only when they are a minute old, so polling once a minute costs at most that.
-const STOCK_REFRESH_MS = 60 * 1000
+// listings and the crafts, and only once they are ten seconds old.
+const STOCK_REFRESH_MS = 10 * 1000
 // The full listing is rebuilt in the background when the picker opens; look again after it.
 const RELIST_SETTLE_MS = 15 * 1000
 const STOCK_KINDS = ['chunks', 'packages', 'pieces', 'concentrates', 'molten']
@@ -200,6 +218,7 @@ export default {
         stock.value = fresh
         stockError.value = ''
         writeCachedOreData(key, fresh)
+        recordGather(id)
       } catch (e) {
         stockError.value = t('ore.loadError', { error: e.message })
       }
@@ -219,6 +238,7 @@ export default {
     })
     watch(() => [props.trackedIds.join(','), props.trackCrafts], () => loadStock())
     onMounted(() => {
+      gatherHistory.value = readCachedOreData(`${props.playerEntityId}:gather`)
       load()
       loadStock()
       timer = setInterval(() => { if (document.visibilityState === 'visible') load() }, REFRESH_MS)
@@ -232,6 +252,7 @@ export default {
     watch(() => props.playerEntityId, () => {
       data.value = null
       stock.value = null
+      gatherHistory.value = readCachedOreData(`${props.playerEntityId}:gather`)
       load()
       loadStock()
     })
@@ -314,6 +335,24 @@ export default {
       ?? rows.value.find((row) => !row.locked)
       ?? null)
 
+    // Gathering speed: raw ore per tier in the tracked places, sampled on every refresh.
+    const gatherHistory = ref(null)
+    const nowSec = ref(Math.floor(Date.now() / 1000))
+    function recordGather(id) {
+      const chains = data.value?.chains
+      if (!chains || !tracking.value) return
+      const totals = trackedStock(stock.value, props.trackedIds, { crafts: props.trackCrafts })
+      const byTier = {}
+      for (const chain of chains) byTier[chain.tier] = rawChunks(chain, totals[String(chain.tier)])
+      const key = `${id}:gather`
+      const signature = `${[...props.trackedIds].map(String).sort().join(',')}|${props.trackCrafts ? 1 : 0}`
+      nowSec.value = Math.floor(Date.now() / 1000)
+      gatherHistory.value = appendGatherSample(gatherHistory.value, { t: nowSec.value, signature, byTier })
+      writeCachedOreData(key, gatherHistory.value)
+    }
+    const speed = computed(() => (selected.value
+      ? gatherRate(gatherHistory.value, selected.value.tier, nowSec.value)
+      : null))
     const gatheredPct = computed(() => (selected.value?.chunksTotal
       ? Math.min(100, (selected.value.haveChunks / selected.value.chunksTotal) * 100)
       : 0))
@@ -392,7 +431,7 @@ export default {
     }
 
     return {
-      data, error, rows, selected, tableOpen, pickTier, gatheredPct, places, formatSkillPct,
+      data, error, rows, selected, tableOpen, pickTier, gatheredPct, places, formatSkillPct, speed,
       stock, stockError, picking, showAllInventories, tracking, trackedSet, pickerGroups,
       toggleTracked, oreSummary, stockTitle, trackLabel, craftsSummary,
       moneyText, moneyLabel, lockText, rowTitle,
@@ -490,6 +529,9 @@ export default {
 }
 .ore-progress-pct { font-size: 15px; font-weight: 800; color: var(--text); }
 .ore-progress-bar { height: 24px; }
+.ore-speed { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+.ore-speed-label { color: var(--text-soft); }
+.ore-speed-value { font-size: 14px; font-weight: 800; color: var(--text); }
 .ore-places-title { margin-top: 4px; font-size: 10px; color: var(--muted); }
 .ore-places { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .ore-place { display: grid; grid-template-columns: minmax(0, 11em) minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 12px; }

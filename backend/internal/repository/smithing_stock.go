@@ -63,7 +63,8 @@ type SmithingStock struct {
 	CraftsAt    int64            `json:"craftsAt,omitempty"`
 	// SourceAt holds when each listing was last read, so only stale tracked ones are reread.
 	SourceAt map[string]int64 `json:"sourceAt,omitempty"`
-	Username string           `json:"-"`
+	// Username names deployables ("<username>'s Wagon"), kept so rereads need no extra request.
+	Username string `json:"username,omitempty"`
 }
 
 type craftOutput struct {
@@ -92,62 +93,81 @@ func (s *SmithingOre) stockCrafts(playerID string) []StockCraft {
 	if err != nil {
 		return nil
 	}
+	paths := []string{"/players/" + playerID + "/crafts", "/players/" + playerID + "/passive-crafts"}
+	found := make([][]StockCraft, len(paths))
+	var wg sync.WaitGroup
+	for i, path := range paths {
+		wg.Add(1)
+		go func(i int, path string) {
+			defer wg.Done()
+			found[i] = s.craftsAt(playerID, path, outputs)
+		}(i, path)
+	}
+	wg.Wait()
 	crafts := []StockCraft{}
-	for _, path := range []string{"/players/" + playerID + "/crafts", "/players/" + playerID + "/passive-crafts"} {
-		var res struct {
-			CraftResults []struct {
-				EntityID             flexibleID `json:"entityId"`
-				OwnerEntityID        flexibleID `json:"ownerEntityId"`
-				Progress             int        `json:"progress"`
-				CraftCount           int        `json:"craftCount"`
-				TotalActionsRequired int        `json:"totalActionsRequired"`
-				Completed            bool       `json:"completed"`
-				BuildingName         string     `json:"buildingName"`
-				ClaimName            string     `json:"claimName"`
-				CraftedItem          []struct {
-					ItemID   flexibleID `json:"item_id"`
-					Quantity int        `json:"quantity"`
-				} `json:"craftedItem"`
-			} `json:"craftResults"`
-		}
-		if err := s.getJSON(path, &res); err != nil {
-			log.Printf("smithing stock %s: %v", path, err)
+	for _, list := range found {
+		crafts = append(crafts, list...)
+	}
+	return crafts
+}
+
+// craftsAt reads one crafts listing and keeps the player's crafts along the ingot chain.
+func (s *SmithingOre) craftsAt(playerID, path string, outputs map[string]craftOutput) []StockCraft {
+	var res struct {
+		CraftResults []struct {
+			EntityID             flexibleID `json:"entityId"`
+			OwnerEntityID        flexibleID `json:"ownerEntityId"`
+			Progress             int        `json:"progress"`
+			CraftCount           int        `json:"craftCount"`
+			TotalActionsRequired int        `json:"totalActionsRequired"`
+			Completed            bool       `json:"completed"`
+			BuildingName         string     `json:"buildingName"`
+			ClaimName            string     `json:"claimName"`
+			CraftedItem          []struct {
+				ItemID   flexibleID `json:"item_id"`
+				Quantity int        `json:"quantity"`
+			} `json:"craftedItem"`
+		} `json:"craftResults"`
+	}
+	if err := s.readJSON(path, &res, true); err != nil {
+		log.Printf("smithing stock %s: %v", path, err)
+		return nil
+	}
+	var crafts []StockCraft
+	for _, r := range res.CraftResults {
+		if string(r.OwnerEntityID) != playerID || len(r.CraftedItem) == 0 {
 			continue
 		}
-		for _, r := range res.CraftResults {
-			if string(r.OwnerEntityID) != playerID || len(r.CraftedItem) == 0 {
-				continue
-			}
-			out, ok := outputs[string(r.CraftedItem[0].ItemID)]
-			if !ok {
-				continue
-			}
-			count := r.CraftCount
-			if count <= 0 {
-				count = 1
-			}
-			craft := StockCraft{
-				ID:        string(r.EntityID),
-				Tier:      out.tier,
-				Kind:      out.kind,
-				Output:    count * r.CraftedItem[0].Quantity,
-				Step:      out.step,
-				Building:  r.BuildingName,
-				Place:     r.ClaimName,
-				Completed: r.Completed,
-			}
-			if out.step != "" && !r.Completed && r.TotalActionsRequired > r.Progress {
-				craft.RemainingEffort = r.TotalActionsRequired - r.Progress
-			}
-			crafts = append(crafts, craft)
+		out, ok := outputs[string(r.CraftedItem[0].ItemID)]
+		if !ok {
+			continue
 		}
+		count := r.CraftCount
+		if count <= 0 {
+			count = 1
+		}
+		craft := StockCraft{
+			ID:        string(r.EntityID),
+			Tier:      out.tier,
+			Kind:      out.kind,
+			Output:    count * r.CraftedItem[0].Quantity,
+			Step:      out.step,
+			Building:  r.BuildingName,
+			Place:     r.ClaimName,
+			Completed: r.Completed,
+		}
+		if out.step != "" && !r.Completed && r.TotalActionsRequired > r.Progress {
+			craft.RemainingEffort = r.TotalActionsRequired - r.Progress
+		}
+		crafts = append(crafts, craft)
 	}
 	return crafts
 }
 
 type smithingStockEntry struct {
-	stock   *SmithingStock
-	listing bool
+	stock     *SmithingStock
+	listing   bool
+	rereading chan struct{}
 	// refresh serialises rereads of tracked listings for one player.
 	refresh sync.Mutex
 }
@@ -227,7 +247,7 @@ func countStock(pockets []stockPocket, goods map[string]stockGood) map[string]*T
 
 // Stock answers from the cached listing. The full listing (every reachable inventory, used to
 // pick what to track) is rebuilt rarely in the background; the listings holding tracked
-// inventories, and the crafts when asked for, are reread right away once they are a minute old.
+// inventories, and the crafts when asked for, are reread right away once they are ten seconds old.
 // Only a player seen for the first time waits for the full listing.
 func (s *SmithingOre) Stock(playerID string, tracked []string, crafts, relist bool) (*SmithingStock, error) {
 	s.stockMu.Lock()
@@ -253,24 +273,99 @@ func (s *SmithingOre) Stock(playerID string, tracked []string, crafts, relist bo
 		}
 	}
 
-	entry.refresh.Lock()
-	defer entry.refresh.Unlock()
+	// BitJita now and then takes many seconds on a listing. The reread runs in the background,
+	// one at a time per player; a request waits for it only briefly, then gets the last snapshot.
+	if done := s.refreshTracked(playerID, entry, tracked, crafts); done != nil {
+		select {
+		case <-done:
+		case <-time.After(s.trackedWait):
+		}
+	}
 	s.stockMu.Lock()
-	current = entry.stock
-	s.stockMu.Unlock()
+	defer s.stockMu.Unlock()
+	return entry.stock, nil
+}
 
+// refreshTracked starts rereading the stale tracked listings and the crafts, unless that is
+// already under way, and returns a channel closed when the running reread ends.
+func (s *SmithingOre) refreshTracked(playerID string, entry *smithingStockEntry, tracked []string, crafts bool) <-chan struct{} {
+	s.stockMu.Lock()
+	defer s.stockMu.Unlock()
+	if entry.rereading != nil {
+		return entry.rereading
+	}
+	current := entry.stock
 	stale := s.staleTrackedSources(current, tracked)
-	craftsStale := crafts && time.Since(time.UnixMilli(current.CraftsAt)) > s.stockTTL
+	craftsStale := crafts && time.Since(time.UnixMilli(current.CraftsAt)) > s.trackedTTL
 	if len(stale) == 0 && !craftsStale {
-		return current, nil
+		return nil
 	}
-	next := s.rereadSources(playerID, current, stale)
-	if craftsStale {
-		next.Crafts = s.stockCrafts(playerID)
-		next.CraftsAt = time.Now().UnixMilli()
+	done := make(chan struct{})
+	entry.rereading = done
+	go func() {
+		defer func() {
+			s.stockMu.Lock()
+			entry.rereading = nil
+			s.stockMu.Unlock()
+			close(done)
+		}()
+		// Inventories and crafts are separate BitJita requests; read them side by side.
+		var crafted []StockCraft
+		var wg sync.WaitGroup
+		if craftsStale {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				crafted = s.stockCrafts(playerID)
+			}()
+		}
+		next := s.rereadSources(playerID, current, stale)
+		wg.Wait()
+		entry.refresh.Lock()
+		defer entry.refresh.Unlock()
+		s.stockMu.Lock()
+		// A full relisting may have landed meanwhile; lay the reread listings over it.
+		if latest := entry.stock; latest != current {
+			next = mergeReread(latest, next, stale)
+		}
+		s.stockMu.Unlock()
+		if craftsStale {
+			next.Crafts = crafted
+			next.CraftsAt = time.Now().UnixMilli()
+		}
+		s.storeStock(playerID, next)
+	}()
+	return done
+}
+
+// mergeReread takes the reread listings from next and everything else from latest.
+func mergeReread(latest, next *SmithingStock, sources []string) *SmithingStock {
+	reread := map[string]bool{}
+	for _, src := range sources {
+		reread[src] = true
 	}
-	s.storeStock(playerID, next)
-	return next, nil
+	merged := *latest
+	merged.SourceAt = map[string]int64{}
+	for k, v := range latest.SourceAt {
+		merged.SourceAt[k] = v
+	}
+	merged.Inventories = nil
+	for _, inv := range next.Inventories {
+		if reread[inv.Src] {
+			merged.Inventories = append(merged.Inventories, inv)
+		}
+	}
+	for _, inv := range latest.Inventories {
+		if !reread[inv.Src] {
+			merged.Inventories = append(merged.Inventories, inv)
+		}
+	}
+	for src := range reread {
+		if at, ok := next.SourceAt[src]; ok {
+			merged.SourceAt[src] = at
+		}
+	}
+	return &merged
 }
 
 func (s *SmithingOre) relistInBackground(playerID string, entry *smithingStockEntry) {
@@ -318,7 +413,7 @@ func (s *SmithingOre) staleTrackedSources(stock *SmithingStock, tracked []string
 			continue
 		}
 		seen[inv.Src] = true
-		if time.Since(time.UnixMilli(stock.SourceAt[inv.Src])) > s.stockTTL {
+		if time.Since(time.UnixMilli(stock.SourceAt[inv.Src])) > s.trackedTTL {
 			stale = append(stale, inv.Src)
 		}
 	}
@@ -342,6 +437,7 @@ func (s *SmithingOre) rereadSources(playerID string, stock *SmithingStock, sourc
 	username := stock.Username
 	if username == "" {
 		username = s.username(playerID)
+		next.Username = username
 	}
 	fresh := make([][]StockInventory, len(sources))
 	ok := make([]bool, len(sources))
@@ -350,7 +446,7 @@ func (s *SmithingOre) rereadSources(playerID string, stock *SmithingStock, sourc
 		wg.Add(1)
 		go func(i int, src string) {
 			defer wg.Done()
-			invs, err := s.readSource(playerID, src, placeOf(stock, src), username, goods)
+			invs, err := s.readSource(playerID, src, placeOf(stock, src), username, goods, true)
 			if err != nil {
 				log.Printf("smithing stock %s %s: %v", playerID, src, err)
 				return
@@ -431,7 +527,17 @@ func (s *SmithingOre) loadStockFromDisk(playerID string) *SmithingStock {
 }
 
 func (s *SmithingOre) getJSON(path string, out interface{}) error {
-	body, status, _, err := s.bitjita.GetAPI(path, "")
+	return s.readJSON(path, out, false)
+}
+
+// readJSON reads a BitJita path; fresh skips the proxy's memory cache, which tracked inventories
+// and crafts need to be up to date within seconds.
+func (s *SmithingOre) readJSON(path string, out interface{}, fresh bool) error {
+	get := s.bitjita.GetAPI
+	if fresh {
+		get = s.bitjita.GetAPIFresh
+	}
+	body, status, _, err := get(path, "")
 	if err != nil {
 		return err
 	}
@@ -471,7 +577,7 @@ type stockBuilding struct {
 }
 
 // readSource reads one BitJita listing and counts the ore in each of its inventories.
-func (s *SmithingOre) readSource(playerID, src, place, username string, goods map[string]stockGood) ([]StockInventory, error) {
+func (s *SmithingOre) readSource(playerID, src, place, username string, goods map[string]stockGood, fresh bool) ([]StockInventory, error) {
 	kind, id, _ := strings.Cut(src, ":")
 	switch kind {
 	case "player":
@@ -484,7 +590,7 @@ func (s *SmithingOre) readSource(playerID, src, place, username string, goods ma
 				Pockets       []stockPocket `json:"pockets"`
 			} `json:"inventories"`
 		}
-		if err := s.getJSON("/players/"+playerID+"/inventories", &own); err != nil {
+		if err := s.readJSON("/players/"+playerID+"/inventories", &own, fresh); err != nil {
 			return nil, err
 		}
 		// Deployed wagons, carts and caches own their inventory and are named after the
@@ -514,7 +620,7 @@ func (s *SmithingOre) readSource(playerID, src, place, username string, goods ma
 			path, field = "/claims/"+id+"/inventories", "buildings"
 		}
 		var raw map[string]json.RawMessage
-		if err := s.getJSON(path, &raw); err != nil {
+		if err := s.readJSON(path, &raw, fresh); err != nil {
 			return nil, err
 		}
 		var buildings []stockBuilding
@@ -585,7 +691,7 @@ func (s *SmithingOre) fetchListing(playerID string, prev *SmithingStock) (*Smith
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i], errs[i] = s.readSource(playerID, src.src, src.place, username, goods)
+			results[i], errs[i] = s.readSource(playerID, src.src, src.place, username, goods, false)
 		}(i, src)
 	}
 	wg.Wait()

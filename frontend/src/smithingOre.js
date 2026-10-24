@@ -167,3 +167,44 @@ export function orePlan(chains, { xpLeft, setup, level, market, stock }) {
     .map((chain) => orePlanRow(chain, { xpLeft, setup, level, market, stock: stock?.[String(chain.tier)] }))
     .sort((a, b) => (a.locked - b.locked) || ((a.chunks ?? Infinity) - (b.chunks ?? Infinity)) || (b.tier - a.tier))
 }
+
+// --- Gathering speed ---------------------------------------------------------------------
+// Raw ore in the tracked places, sampled on every refresh. Only growth between samples counts,
+// so processing ore into concentrates or ingots never reads as negative gathering.
+
+const GATHER_KEEP_SEC = 6 * 3600
+const GATHER_MAX_SAMPLES = 3000
+
+// Raw ore of one tier as chunks: chunks, loose pieces and packed pieces.
+export function rawChunks(chain, counts) {
+  if (!counts || !chain?.piecesPerChunk) return 0
+  const pieces = (counts.pieces ?? 0) + (counts.packages ?? 0) * (chain.piecesPerPackage ?? 0)
+  return (counts.chunks ?? 0) + pieces / chain.piecesPerChunk
+}
+
+// Adds a sample ({ t, byTier }) to the history, restarting it when the tracked set changed.
+export function appendGatherSample(history, { t, signature, byTier }) {
+  const keepFrom = t - GATHER_KEEP_SEC
+  const samples = history?.signature === signature
+    ? (history.samples ?? []).filter((s) => s.t >= keepFrom)
+    : []
+  const last = samples[samples.length - 1]
+  if (last && t - last.t < 5) return { signature, samples }
+  samples.push({ t, byTier })
+  return { signature, samples: samples.slice(-GATHER_MAX_SAMPLES) }
+}
+
+// Chunks gathered per hour over the last window, or null while there is too little to tell.
+export function gatherRate(history, tier, now, { windowSec = 1800, minSpanSec = 120 } = {}) {
+  const key = String(tier)
+  const samples = (history?.samples ?? []).filter((s) => s.t >= now - windowSec)
+  if (samples.length < 2) return null
+  const span = samples[samples.length - 1].t - samples[0].t
+  if (span < minSpanSec) return null
+  let gained = 0
+  for (let i = 1; i < samples.length; i += 1) {
+    const delta = (samples[i].byTier[key] ?? 0) - (samples[i - 1].byTier[key] ?? 0)
+    if (delta > 0) gained += delta
+  }
+  return { perHour: (gained / span) * 3600, spanSec: span }
+}

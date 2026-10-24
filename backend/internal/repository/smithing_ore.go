@@ -152,10 +152,15 @@ type SmithingOre struct {
 	setupMu sync.Mutex
 	setups  map[string]*smithingSetupEntry
 
-	stockTTL time.Duration
-	listTTL  time.Duration
-	stockMu  sync.Mutex
-	stocks   map[string]*smithingStockEntry
+	// stockTTL is the least age at which opening the picker rebuilds the full listing;
+	// trackedTTL is how stale tracked inventories and crafts may get.
+	stockTTL   time.Duration
+	trackedTTL time.Duration
+	// trackedWait is how long a request waits for a reread before taking the last snapshot.
+	trackedWait time.Duration
+	listTTL     time.Duration
+	stockMu     sync.Mutex
+	stocks      map[string]*smithingStockEntry
 }
 
 func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *SmithingOre {
@@ -165,8 +170,11 @@ func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *S
 		marketTTL: marketTTL,
 		setups:    map[string]*smithingSetupEntry{},
 		stockTTL:  time.Minute,
-		listTTL:   30 * time.Minute,
-		stocks:    map[string]*smithingStockEntry{},
+		// Well under the dashboard's 10-second poll, so every poll starts a reread.
+		trackedTTL:  5 * time.Second,
+		trackedWait: 2 * time.Second,
+		listTTL:     30 * time.Minute,
+		stocks:      map[string]*smithingStockEntry{},
 	}
 }
 
