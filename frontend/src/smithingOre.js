@@ -79,30 +79,50 @@ export function trackedStock(stock, trackedIds, { crafts = false } = {}) {
   return total
 }
 
-export function orePlanRow(chain, { xpLeft, setup, level, market, stock }) {
+function chainXp(chain, setup) {
   const progress = setup.progressPerSwing
   const swingXp = Math.ceil(chain.xpPerProgress * progress * setup.xpRate)
   const xpConcentrate = progress > 0 ? (chain.concentrateEffort / progress) * swingXp : 0
   const xpForge = progress > 0 ? (chain.forgeEffort / progress) * swingXp : 0
-  const xpPerIngot = chain.concentratesPerIngot * xpConcentrate + xpForge
+  return {
+    progress,
+    swingXp,
+    xpForge,
+    xpPerIngot: chain.concentratesPerIngot * xpConcentrate + xpForge,
+    piecesPerIngot: chain.concentratesPerIngot * chain.piecesPerConcentrate,
+  }
+}
+
+// Gathered ore counts for the XP it still has to give: raw ore for the whole chain,
+// concentrates and molten metal only for the steps left after them.
+function stockXp(chain, xp, have) {
+  const rawPieces = (have.chunks ?? 0) * chain.piecesPerChunk
+    + (have.packages ?? 0) * (chain.piecesPerPackage ?? 0)
+    + (have.pieces ?? 0)
+  return (xp.piecesPerIngot ? (rawPieces / xp.piecesPerIngot) * xp.xpPerIngot : 0)
+    + (have.concentrates ?? 0) * (xp.xpForge / chain.concentratesPerIngot)
+    + (have.molten ?? 0) * xp.xpForge
+    + (xp.progress > 0 ? ((have.effortLeft ?? 0) / xp.progress) * xp.swingXp : 0)
+}
+
+// How many chunks' worth of the chain some gathered ore stands for.
+export function stockAsChunks(chain, setup, have) {
+  const xp = chainXp(chain, setup)
+  if (!xp.xpPerIngot || !chain.piecesPerChunk) return 0
+  return (stockXp(chain, xp, have ?? {}) / xp.xpPerIngot) * xp.piecesPerIngot / chain.piecesPerChunk
+}
+
+export function orePlanRow(chain, { xpLeft, setup, level, market, stock }) {
+  const xp = chainXp(chain, setup)
+  const { progress, swingXp, xpPerIngot, piecesPerIngot } = xp
   const effortPerIngot = chain.concentratesPerIngot * chain.concentrateEffort + chain.forgeEffort
   const ingots = xpPerIngot > 0 ? Math.ceil(Math.max(0, xpLeft) / xpPerIngot) : 0
-  const piecesPerIngot = chain.concentratesPerIngot * chain.piecesPerConcentrate
   const swings = progress > 0 ? Math.ceil((ingots * effortPerIngot) / progress) : 0
   const lockedByLevel = level < chain.levelRequired
   const lockedByTool = (setup.tool?.level ?? 0) < chain.toolLevelRequired
 
-  // Gathered ore counts for the XP it still has to give: raw ore for the whole chain,
-  // concentrates and molten metal only for the steps left after them.
   const have = stock ?? {}
-  const rawPieces = (have.chunks ?? 0) * chain.piecesPerChunk
-    + (have.packages ?? 0) * (chain.piecesPerPackage ?? 0)
-    + (have.pieces ?? 0)
-  const stockXp = (piecesPerIngot ? (rawPieces / piecesPerIngot) * xpPerIngot : 0)
-    + (have.concentrates ?? 0) * (xpForge / chain.concentratesPerIngot)
-    + (have.molten ?? 0) * xpForge
-    + (progress > 0 ? ((have.effortLeft ?? 0) / progress) * swingXp : 0)
-  const xpStillNeeded = Math.max(0, xpLeft - stockXp)
+  const xpStillNeeded = Math.max(0, xpLeft - stockXp(chain, xp, have))
   const piecesFor = (xp) => (xpPerIngot > 0 ? Math.ceil((xp / xpPerIngot) * piecesPerIngot) : 0)
   const chunksFor = (pieces) => (chain.piecesPerChunk ? Math.ceil(pieces / chain.piecesPerChunk) : 0)
   const piecesTotal = piecesFor(Math.max(0, xpLeft))

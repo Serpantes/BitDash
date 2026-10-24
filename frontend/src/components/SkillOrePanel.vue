@@ -89,6 +89,31 @@
             </tbody>
           </table>
         </div>
+        <div v-else class="ore-progress">
+          <div class="ore-progress-head">
+            <span class="ore-progress-title">{{ t('ore.gathered') }}</span>
+            <span class="ore-progress-pct">{{ formatSkillPct(gatheredPct) }}</span>
+          </div>
+          <div class="bc-bar ore-progress-bar" role="meter" :aria-valuenow="selected.haveChunks" aria-valuemin="0" :aria-valuemax="selected.chunksTotal">
+            <div class="bc-bar-track"><div class="bc-bar-fill" :style="{ width: `${gatheredPct}%` }"></div></div>
+            <span class="bc-bar-text">{{ formatNumber(selected.haveChunks) }} / {{ formatNumber(selected.chunksTotal) }}</span>
+          </div>
+
+          <template v-if="places.length">
+            <div class="ore-places-title">{{ t('ore.wherePlaces') }}</div>
+            <ul class="ore-places">
+              <li v-for="place in places" :key="place.key" class="ore-place" :title="place.title">
+                <span class="ore-place-name">{{ place.name }}</span>
+                <span class="ore-place-track"><span class="ore-place-fill" :style="{ width: `${place.share}%` }"></span></span>
+                <span class="ore-place-value">{{ formatNumber(Math.round(place.chunks)) }}</span>
+              </li>
+            </ul>
+          </template>
+          <div v-else class="ore-progress-empty">
+            {{ tracking ? t('ore.nothingForTier', { tier: selected.tier }) : t('ore.nothingTracked') }}
+            <button v-if="!tracking" type="button" class="ore-track-btn" @click="picking = true">{{ t('ore.trackOff') }}</button>
+          </div>
+        </div>
       </template>
 
       <div class="ore-foot">
@@ -105,9 +130,9 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchSmithingOre, fetchSmithingStock } from '../api'
 import { formatNumber, t } from '../i18n'
-import { formatXpShort } from '../skillProgress'
+import { formatSkillPct, formatXpShort } from '../skillProgress'
 import { formatPlayTime } from '../xpHistory'
-import { orePlan, readCachedOreData, trackedStock, writeCachedOreData } from '../smithingOre'
+import { orePlan, readCachedOreData, stockAsChunks, trackedStock, writeCachedOreData } from '../smithingOre'
 
 // The backend keeps setups and order books fresh within minutes; polling slower is enough.
 const REFRESH_MS = 5 * 60 * 1000
@@ -289,6 +314,45 @@ export default {
       ?? rows.value.find((row) => !row.locked)
       ?? null)
 
+    const gatheredPct = computed(() => (selected.value?.chunksTotal
+      ? Math.min(100, (selected.value.haveChunks / selected.value.chunksTotal) * 100)
+      : 0))
+    // Where the chosen tier's gathered ore sits, as chunks, largest first.
+    const places = computed(() => {
+      const row = selected.value
+      const chain = data.value?.chains?.find((c) => c.tier === row?.tier)
+      if (!row || !chain) return []
+      const tier = String(row.tier)
+      const kindsOf = (counts) => STOCK_KINDS
+        .filter((kind) => counts[kind])
+        .map((kind) => t(`ore.kind.${kind}`, { n: formatNumber(counts[kind]) }))
+        .join(', ')
+      const list = []
+      for (const inv of stock.value?.inventories ?? []) {
+        const counts = inv.counts?.[tier]
+        if (!counts || !trackedSet.value.has(String(inv.id))) continue
+        list.push({
+          key: inv.id,
+          name: inv.place && inv.source !== 'deployable' ? `${inv.name} · ${inv.place}` : inv.name,
+          chunks: stockAsChunks(chain, data.value.setup, counts),
+          title: kindsOf(counts),
+        })
+      }
+      if (props.trackCrafts) {
+        const counts = trackedStock({ crafts: stock.value?.crafts }, [], { crafts: true })[tier]
+        if (counts) {
+          list.push({
+            key: 'crafts',
+            name: t('ore.pickCrafts'),
+            chunks: stockAsChunks(chain, data.value.setup, counts),
+            title: [kindsOf(counts), counts.effortLeft ? t('ore.effortLeft', { n: formatNumber(counts.effortLeft) }) : ''].filter(Boolean).join(', '),
+          })
+        }
+      }
+      const shown = list.filter((place) => place.chunks >= 0.5).sort((a, b) => b.chunks - a.chunks)
+      const max = Math.max(...shown.map((place) => place.chunks), 1)
+      return shown.map((place) => ({ ...place, share: (place.chunks / max) * 100 }))
+    })
     const formatMoney = (value) => formatXpShort(Math.round(value))
     function moneyText(row) {
       return row.money == null ? '—' : formatMoney(row.money)
@@ -328,7 +392,7 @@ export default {
     }
 
     return {
-      data, error, rows, selected, tableOpen, pickTier,
+      data, error, rows, selected, tableOpen, pickTier, gatheredPct, places, formatSkillPct,
       stock, stockError, picking, showAllInventories, tracking, trackedSet, pickerGroups,
       toggleTracked, oreSummary, stockTitle, trackLabel, craftsSummary,
       moneyText, moneyLabel, lockText, rowTitle,
@@ -413,6 +477,27 @@ export default {
 .ore-row--selected td:first-child { box-shadow: inset 2px 0 0 var(--text-soft); }
 .ore-row--locked { cursor: default; }
 .ore-row--locked td { opacity: 0.45; }
+
+.ore-progress { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.ore-progress-head { display: flex; justify-content: space-between; align-items: baseline; }
+.ore-progress-title, .ore-places-title {
+  font-family: var(--font-title);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.ore-progress-pct { font-size: 15px; font-weight: 800; color: var(--text); }
+.ore-progress-bar { height: 24px; }
+.ore-places-title { margin-top: 4px; font-size: 10px; color: var(--muted); }
+.ore-places { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.ore-place { display: grid; grid-template-columns: minmax(0, 11em) minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 12px; }
+.ore-place-name { color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ore-place-track { height: 8px; }
+.ore-place-fill { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.ore-place-value { min-width: 4ch; text-align: right; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.ore-progress-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 
 .ore-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 11px; color: var(--muted); }
 .ore-track-btn {
