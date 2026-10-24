@@ -61,3 +61,27 @@ func TestBuildSmithingSetupWithoutHammer(t *testing.T) {
 		t.Errorf("setup = %+v, want no tool, no progress and a neutral rate", setup)
 	}
 }
+
+func TestParseMarketBookSortsAndDropsBadOrders(t *testing.T) {
+	book, err := parseMarketBook([]byte(`{
+		"sellOrders": [
+			{"priceThreshold": "100", "quantity": "309"},
+			{"priceThreshold": "50", "quantity": "3"},
+			{"priceThreshold": "0", "quantity": "10"},
+			{"priceThreshold": "70", "quantity": "x"}
+		],
+		"buyOrders": [
+			{"priceThreshold": "20", "quantity": "5"},
+			{"priceThreshold": "45", "quantity": "1"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(book.Sell) != 2 || book.Sell[0] != [2]float64{50, 3} || book.Sell[1] != [2]float64{100, 309} {
+		t.Errorf("sell = %v, want cheapest first without bad orders", book.Sell)
+	}
+	if len(book.Buy) != 2 || book.Buy[0] != [2]float64{45, 1} {
+		t.Errorf("buy = %v, want best bid first", book.Buy)
+	}
+}

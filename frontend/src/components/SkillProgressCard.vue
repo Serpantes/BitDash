@@ -103,6 +103,8 @@
         :xp-left="progress.toTarget"
         :level="progress.level"
         :target-level="progress.targetLevel"
+        :tier="oreTier"
+        @update:tier="$emit('update-view', { skillOreTier: $event })"
       />
       <SkillActivityPanel
         v-else-if="activeTab === 'pace'"
@@ -157,6 +159,7 @@ export default {
     trackedSince: { type: Number, default: null },
     chartTab: { type: String, default: 'pace' },
     pacePeriod: { type: String, default: '7d' },
+    oreTier: { type: Number, default: null },
   },
   emits: ['update-view'],
   setup(props) {

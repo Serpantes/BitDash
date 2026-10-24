@@ -150,4 +150,12 @@ func TestSkillRankingsServeStaleWhileRefreshing(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stale answer waited on the upstream")
 	}
+
+	// An explicit refresh waits only briefly for the hanging upstream, then takes the stored answer.
+	b.staleFreshWait = 20 * time.Millisecond
+	start := time.Now()
+	fresh, _, status, _ := b.GetAPIFresh("/players/7/skill-rankings", "")
+	if status != "STALE" || string(fresh) != `{"hit":1}` || time.Since(start) > time.Second {
+		t.Fatalf("fresh load = %q status %q after %v", fresh, status, time.Since(start))
+	}
 }

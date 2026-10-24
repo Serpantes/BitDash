@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +21,9 @@ import (
 const (
 	smithingSkillID      = 6
 	smithingChainsFile   = "smithing-ore-chains.json"
-	smithingChainsFormat = 1
+	smithingChainsFormat = 3
+	smithingMarketFile   = "smithing-ore-market.json"
+	smithingMarketDepth  = 60
 
 	statCraftingSpeed  = 15
 	statSmithingSpeed  = 25
@@ -36,6 +41,12 @@ var smithingIngotTiers = []struct {
 
 type IngotChain struct {
 	Tier                 int     `json:"tier"`
+	IngotID              string  `json:"ingotId"`
+	ChunkCargoID         string  `json:"chunkCargoId,omitempty"`
+	PieceItemID          string  `json:"pieceItemId"`
+	LogItemID            string  `json:"logItemId,omitempty"`
+	LogName              string  `json:"logName,omitempty"`
+	FluxItemID           string  `json:"fluxItemId,omitempty"`
 	IngotName            string  `json:"ingotName"`
 	IngotIcon            string  `json:"ingotIcon,omitempty"`
 	PieceName            string  `json:"pieceName"`
@@ -69,9 +80,23 @@ type SmithingSetup struct {
 	FetchedAt        int64         `json:"fetchedAt"`
 }
 
+// MarketBook holds the cheapest sell orders (ascending) and the best buy orders (descending)
+// as [price, quantity] pairs, across all regions.
+type MarketBook struct {
+	Sell [][2]float64 `json:"sell"`
+	Buy  [][2]float64 `json:"buy"`
+}
+
+type smithingMarket struct {
+	FetchedAt int64                 `json:"fetchedAt"`
+	Books     map[string]MarketBook `json:"books"`
+}
+
 type SmithingOrePayload struct {
-	Chains []IngotChain   `json:"chains"`
-	Setup  *SmithingSetup `json:"setup"`
+	Chains          []IngotChain          `json:"chains"`
+	Setup           *SmithingSetup        `json:"setup"`
+	Market          map[string]MarketBook `json:"market"`
+	MarketFetchedAt int64                 `json:"marketFetchedAt"`
 }
 
 type recipeStack struct {
@@ -112,8 +137,12 @@ type smithingSetupEntry struct {
 }
 
 type SmithingOre struct {
-	bitjita  *BitjitaCache
-	setupTTL time.Duration
+	bitjita   *BitjitaCache
+	setupTTL  time.Duration
+	marketTTL time.Duration
+
+	marketMu sync.Mutex
+	market   *smithingMarket
 
 	chainsMu sync.Mutex
 	chains   []IngotChain
@@ -122,14 +151,29 @@ type SmithingOre struct {
 	setups  map[string]*smithingSetupEntry
 }
 
-func NewSmithingOre(bitjita *BitjitaCache, setupTTL time.Duration) *SmithingOre {
-	return &SmithingOre{bitjita: bitjita, setupTTL: setupTTL, setups: map[string]*smithingSetupEntry{}}
+func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *SmithingOre {
+	return &SmithingOre{bitjita: bitjita, setupTTL: setupTTL, marketTTL: marketTTL, setups: map[string]*smithingSetupEntry{}}
 }
 
-// Warm builds the chains ahead of the first request.
-func (s *SmithingOre) Warm() {
+// Run builds the chains ahead of the first request and keeps the market books fresh, so
+// requests never wait on BitJita's order books.
+func (s *SmithingOre) Run() {
 	if _, err := s.Chains(); err != nil {
 		log.Printf("smithing ore chains: %v", err)
+	}
+	s.marketMu.Lock()
+	s.market = s.loadMarketFromDisk()
+	s.marketMu.Unlock()
+	for {
+		s.marketMu.Lock()
+		stale := s.market == nil || time.Since(time.UnixMilli(s.market.FetchedAt)) > s.marketTTL
+		s.marketMu.Unlock()
+		if stale {
+			if err := s.refreshMarket(); err != nil {
+				log.Printf("smithing ore market: %v", err)
+			}
+		}
+		time.Sleep(time.Minute)
 	}
 }
 
@@ -142,7 +186,14 @@ func (s *SmithingOre) Get(playerID string) (*SmithingOrePayload, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SmithingOrePayload{Chains: chains, Setup: setup}, nil
+	payload := &SmithingOrePayload{Chains: chains, Setup: setup, Market: map[string]MarketBook{}}
+	s.marketMu.Lock()
+	if s.market != nil {
+		payload.Market = s.market.Books
+		payload.MarketFetchedAt = s.market.FetchedAt
+	}
+	s.marketMu.Unlock()
+	return payload, nil
 }
 
 func (s *SmithingOre) Chains() ([]IngotChain, error) {
@@ -269,9 +320,11 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 
 	chain := &IngotChain{
 		Tier:                 tier,
+		IngotID:              ingotID,
 		IngotName:            ingot.Item.Name,
 		IngotIcon:            ingot.Item.IconAssetName,
 		PieceName:            piece.Name,
+		PieceItemID:          string(piece.ID),
 		LevelRequired:        1,
 		SwingTime:            forge.TimeRequirement,
 		ForgeEffort:          forge.ActionsRequired,
@@ -292,10 +345,17 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 	}
 	if flux := findConsumed(forge, func(n string) bool { return strings.Contains(n, "Flux") }); flux != nil {
 		chain.FluxPerIngot = flux.Quantity
+		chain.FluxItemID = string(flux.ID)
+	}
+	if fuel := findConsumed(smelt, func(n string) bool { return !strings.Contains(n, "Concentrate") }); fuel != nil {
+		chain.LogItemID = string(fuel.ID)
+		chain.LogName = fuel.Name
 	}
 	if split := findRecipe(pieceItem, string(piece.ID), "Extract"); split != nil {
 		if len(split.ConsumedItems) > 0 {
 			chain.ChunkName = split.ConsumedItems[0].Name
+			// Recipes reference cargo under ids that differ from the market's, so match by name.
+			chain.ChunkCargoID = s.cargoIDByName(chain.ChunkName)
 		}
 		for _, out := range split.CraftedItems {
 			if out.ID == piece.ID {
@@ -456,4 +516,153 @@ func buildSmithingSetup(statsBody, invBody []byte, now time.Time) (*SmithingSetu
 		setup.ProgressPerSwing = float64(tool.Power) + setup.SkillPower
 	}
 	return setup, nil
+}
+
+func (s *SmithingOre) cargoIDByName(name string) string {
+	body, status, _, err := s.bitjita.GetAPI("/cargo", "q="+url.QueryEscape(name))
+	if err != nil || status != http.StatusOK {
+		return ""
+	}
+	var res struct {
+		Cargos []struct {
+			ID   flexibleID `json:"id"`
+			Name string     `json:"name"`
+		} `json:"cargos"`
+	}
+	if json.Unmarshal(body, &res) != nil {
+		return ""
+	}
+	for _, c := range res.Cargos {
+		if c.Name == name {
+			return string(c.ID)
+		}
+	}
+	return ""
+}
+
+func (s *SmithingOre) marketGoods() []string {
+	chains, err := s.Chains()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var keys []string
+	add := func(kind, id string) {
+		if id == "" || seen[kind+":"+id] {
+			return
+		}
+		seen[kind+":"+id] = true
+		keys = append(keys, kind+":"+id)
+	}
+	for _, c := range chains {
+		add("cargo", c.ChunkCargoID)
+		add("item", c.PieceItemID)
+		add("item", c.LogItemID)
+		add("item", c.FluxItemID)
+		add("item", c.IngotID)
+	}
+	return keys
+}
+
+func (s *SmithingOre) refreshMarket() error {
+	keys := s.marketGoods()
+	if len(keys) == 0 {
+		return errors.New("no goods to price")
+	}
+	books := map[string]MarketBook{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	failed := 0
+	for _, key := range keys {
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			kind, id, _ := strings.Cut(key, ":")
+			body, status, err := s.bitjita.fetchUpstream("/market/"+kind+"/"+id, "")
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil || status != http.StatusOK {
+				failed++
+				return
+			}
+			book, err := parseMarketBook(body)
+			if err != nil {
+				failed++
+				return
+			}
+			books[key] = book
+		}(key)
+	}
+	wg.Wait()
+	if failed == len(keys) {
+		return errors.New("every order book request failed")
+	}
+
+	s.marketMu.Lock()
+	// Keep the last known book for goods whose refresh failed this round.
+	if s.market != nil {
+		for key, book := range s.market.Books {
+			if _, ok := books[key]; !ok {
+				books[key] = book
+			}
+		}
+	}
+	s.market = &smithingMarket{FetchedAt: time.Now().UnixMilli(), Books: books}
+	snapshot := s.market
+	s.marketMu.Unlock()
+	if body, err := json.Marshal(snapshot); err == nil {
+		_ = s.bitjita.apiFiles.Set(smithingMarketFile, body)
+	}
+	return nil
+}
+
+func (s *SmithingOre) loadMarketFromDisk() *smithingMarket {
+	body, ok := s.bitjita.apiFiles.Get(smithingMarketFile)
+	if !ok {
+		return nil
+	}
+	var m smithingMarket
+	if err := json.Unmarshal(body, &m); err != nil || m.FetchedAt == 0 {
+		return nil
+	}
+	return &m
+}
+
+func parseMarketBook(body []byte) (MarketBook, error) {
+	type order struct {
+		Price    string `json:"priceThreshold"`
+		Quantity string `json:"quantity"`
+	}
+	var res struct {
+		SellOrders []order `json:"sellOrders"`
+		BuyOrders  []order `json:"buyOrders"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return MarketBook{}, err
+	}
+	levels := func(orders []order, ascending bool) [][2]float64 {
+		out := make([][2]float64, 0, len(orders))
+		for _, o := range orders {
+			price, err1 := strconv.ParseFloat(o.Price, 64)
+			qty, err2 := strconv.ParseFloat(o.Quantity, 64)
+			if err1 != nil || err2 != nil || price <= 0 || qty <= 0 {
+				continue
+			}
+			out = append(out, [2]float64{price, qty})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if ascending {
+				return out[i][0] < out[j][0]
+			}
+			return out[i][0] > out[j][0]
+		})
+		if len(out) > smithingMarketDepth {
+			out = out[:smithingMarketDepth]
+		}
+		return out
+	}
+	return MarketBook{Sell: levels(res.SellOrders, true), Buy: levels(res.BuyOrders, false)}, nil
 }

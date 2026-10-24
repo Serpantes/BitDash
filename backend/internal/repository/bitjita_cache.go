@@ -24,6 +24,14 @@ type BitjitaCache struct {
 
 	// Background refreshes of "stale" paths currently in flight, keyed by memory key.
 	staleRefreshing sync.Map
+	// How long a no-cache request on a "stale" path waits for BitJita before taking the stored answer.
+	staleFreshWait time.Duration
+}
+
+type staleFlight struct {
+	done chan struct{}
+	body []byte
+	ok   bool
 }
 
 func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*BitjitaCache, error) {
@@ -36,11 +44,12 @@ func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*Bitji
 		return nil, err
 	}
 	return &BitjitaCache{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		client:     &http.Client{Timeout: 120 * time.Second},
-		apiFiles:   apiFiles,
-		iconFiles:  iconFiles,
-		liveMemory: liveMemory,
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		client:         &http.Client{Timeout: 120 * time.Second},
+		apiFiles:       apiFiles,
+		iconFiles:      iconFiles,
+		liveMemory:     liveMemory,
+		staleFreshWait: 3 * time.Second,
 	}, nil
 }
 
@@ -158,8 +167,18 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 	if policy == "stale" {
 		staleKey := staleDiskKey(path, query)
 		stale, haveStale := b.apiFiles.Get(staleKey)
-		if haveStale && !fresh {
-			b.refreshStale(path, query, memKey, staleKey)
+		if haveStale {
+			flight := b.refreshStale(path, query, memKey, staleKey)
+			if !fresh {
+				return stale, http.StatusOK, "STALE", nil
+			}
+			select {
+			case <-flight.done:
+				if flight.ok {
+					return flight.body, http.StatusOK, "MISS", nil
+				}
+			case <-time.After(b.staleFreshWait):
+			}
 			return stale, http.StatusOK, "STALE", nil
 		}
 		body, status, err = b.fetchUpstream(path, query)
@@ -189,19 +208,25 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 	return body, status, "MISS", nil
 }
 
-func (b *BitjitaCache) refreshStale(path, query, memKey, staleKey string) {
-	if _, running := b.staleRefreshing.LoadOrStore(memKey, true); running {
-		return
+func (b *BitjitaCache) refreshStale(path, query, memKey, staleKey string) *staleFlight {
+	flight := &staleFlight{done: make(chan struct{})}
+	if running, loaded := b.staleRefreshing.LoadOrStore(memKey, flight); loaded {
+		return running.(*staleFlight)
 	}
 	go func() {
-		defer b.staleRefreshing.Delete(memKey)
+		defer func() {
+			b.staleRefreshing.Delete(memKey)
+			close(flight.done)
+		}()
 		body, status, err := b.fetchUpstream(path, query)
 		if err != nil || status < 200 || status >= 300 {
 			return
 		}
 		b.liveMemory.Set(memKey, body)
 		_ = b.apiFiles.Set(staleKey, body)
+		flight.body, flight.ok = body, true
 	}()
+	return flight
 }
 
 func (b *BitjitaCache) fetchUpstream(path, query string) ([]byte, int, error) {

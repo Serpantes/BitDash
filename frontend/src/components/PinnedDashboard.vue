@@ -187,6 +187,7 @@
             :tracked-since="skillTrackedSince(item)"
             :chart-tab="item.skillChartTab"
             :pace-period="item.skillPacePeriod"
+            :ore-tier="item.skillOreTier ?? null"
             @update-view="updatePinnedBlock(item.inventoryId, $event)"
           />
 

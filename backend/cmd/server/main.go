@@ -84,8 +84,8 @@ func main() {
 		log.Fatalf("dashboard store: %v", err)
 	}
 	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 10*time.Minute)
-	smithingOre := repository.NewSmithingOre(bitjitaDataCache, 5*time.Minute)
-	go smithingOre.Warm()
+	smithingOre := repository.NewSmithingOre(bitjitaDataCache, 5*time.Minute, 10*time.Minute)
+	go smithingOre.Run()
 
 	http.HandleFunc("/api/data", handler)
 	http.HandleFunc("/api/health", delivery.NewHealthHandler())
