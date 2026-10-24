@@ -14,12 +14,19 @@ func NewSmithingOreHandler(ore *repository.SmithingOre) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		playerID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/smithing-ore/"), "/")
-		if !isAllDigits(playerID) {
-			http.Error(w, "player id must be numeric", http.StatusBadRequest)
+		rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/smithing-ore/"), "/")
+		playerID, view, _ := strings.Cut(rest, "/")
+		if !isAllDigits(playerID) || (view != "" && view != "stock") {
+			http.Error(w, "expected /api/smithing-ore/{playerId}[/stock]", http.StatusBadRequest)
 			return
 		}
-		payload, err := ore.Get(playerID)
+		var payload interface{}
+		var err error
+		if view == "stock" {
+			payload, err = ore.Stock(playerID)
+		} else {
+			payload, err = ore.Get(playerID)
+		}
 		if err != nil {
 			http.Error(w, "smithing ore data unavailable", http.StatusBadGateway)
 			return

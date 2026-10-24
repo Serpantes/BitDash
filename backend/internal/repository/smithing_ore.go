@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +21,7 @@ import (
 const (
 	smithingSkillID      = 6
 	smithingChainsFile   = "smithing-ore-chains.json"
-	smithingChainsFormat = 4
+	smithingChainsFormat = 5
 	smithingMarketFile   = "smithing-ore-market.json"
 	smithingMarketDepth  = 60
 
@@ -42,6 +43,12 @@ type IngotChain struct {
 	Tier                 int     `json:"tier"`
 	IngotID              string  `json:"ingotId"`
 	LogName              string  `json:"logName,omitempty"`
+	ChunkCargoID         string  `json:"chunkCargoId,omitempty"`
+	PackageCargoID       string  `json:"packageCargoId,omitempty"`
+	PiecesPerPackage     int     `json:"piecesPerPackage,omitempty"`
+	PieceItemID          string  `json:"pieceItemId"`
+	ConcentrateItemID    string  `json:"concentrateItemId"`
+	MoltenItemID         string  `json:"moltenItemId"`
 	IngotName            string  `json:"ingotName"`
 	IngotIcon            string  `json:"ingotIcon,omitempty"`
 	PieceName            string  `json:"pieceName"`
@@ -144,10 +151,21 @@ type SmithingOre struct {
 
 	setupMu sync.Mutex
 	setups  map[string]*smithingSetupEntry
+
+	stockTTL time.Duration
+	stockMu  sync.Mutex
+	stocks   map[string]*smithingStockEntry
 }
 
 func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *SmithingOre {
-	return &SmithingOre{bitjita: bitjita, setupTTL: setupTTL, marketTTL: marketTTL, setups: map[string]*smithingSetupEntry{}}
+	return &SmithingOre{
+		bitjita:   bitjita,
+		setupTTL:  setupTTL,
+		marketTTL: marketTTL,
+		setups:    map[string]*smithingSetupEntry{},
+		stockTTL:  2 * time.Minute,
+		stocks:    map[string]*smithingStockEntry{},
+	}
 }
 
 // Run builds the chains ahead of the first request and keeps the market books fresh, so
@@ -319,6 +337,9 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 		IngotName:            ingot.Item.Name,
 		IngotIcon:            ingot.Item.IconAssetName,
 		PieceName:            piece.Name,
+		PieceItemID:          string(piece.ID),
+		ConcentrateItemID:    string(concentrate.ID),
+		MoltenItemID:         string(molten.ID),
 		LevelRequired:        1,
 		SwingTime:            forge.TimeRequirement,
 		ForgeEffort:          forge.ActionsRequired,
@@ -346,6 +367,9 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 	if split := findRecipe(pieceItem, string(piece.ID), "Extract"); split != nil {
 		if len(split.ConsumedItems) > 0 {
 			chain.ChunkName = split.ConsumedItems[0].Name
+			// Recipes reference cargo under ids that differ from inventories and the market,
+			// so cargo is matched by name.
+			chain.ChunkCargoID = s.cargoIDByName(chain.ChunkName)
 		}
 		for _, out := range split.CraftedItems {
 			if out.ID == piece.ID {
@@ -353,7 +377,37 @@ func (s *SmithingOre) buildChain(tier int, ingotID string) (*IngotChain, error) 
 			}
 		}
 	}
+	if unpack := findRecipe(pieceItem, string(piece.ID), "Unpack"); unpack != nil && len(unpack.ConsumedItems) > 0 {
+		for _, out := range unpack.CraftedItems {
+			if out.ID == piece.ID {
+				chain.PiecesPerPackage = out.Quantity
+			}
+		}
+		chain.PackageCargoID = s.cargoIDByName(unpack.ConsumedItems[0].Name)
+	}
 	return chain, nil
+}
+
+func (s *SmithingOre) cargoIDByName(name string) string {
+	body, status, _, err := s.bitjita.GetAPI("/cargo", "q="+url.QueryEscape(name))
+	if err != nil || status != http.StatusOK {
+		return ""
+	}
+	var res struct {
+		Cargos []struct {
+			ID   flexibleID `json:"id"`
+			Name string     `json:"name"`
+		} `json:"cargos"`
+	}
+	if json.Unmarshal(body, &res) != nil {
+		return ""
+	}
+	for _, c := range res.Cargos {
+		if c.Name == name {
+			return string(c.ID)
+		}
+	}
+	return ""
 }
 
 // Setup returns the cached numbers at once and refreshes them in the background when stale;

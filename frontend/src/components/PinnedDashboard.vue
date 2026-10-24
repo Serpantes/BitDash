@@ -188,6 +188,7 @@
             :chart-tab="item.skillChartTab"
             :pace-period="item.skillPacePeriod"
             :ore-tier="item.skillOreTier ?? null"
+            :ore-inventories="item.skillOreInventories ?? []"
             @update-view="updatePinnedBlock(item.inventoryId, $event)"
           />
 
