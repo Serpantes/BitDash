@@ -54,6 +54,7 @@ type StockCraft struct {
 	Building        string `json:"building,omitempty"`
 	Place           string `json:"place,omitempty"`
 	Completed       bool   `json:"completed,omitempty"`
+	Passive         bool   `json:"passive,omitempty"`
 }
 
 type SmithingStock struct {
@@ -61,6 +62,7 @@ type SmithingStock struct {
 	Inventories []StockInventory `json:"inventories"`
 	Crafts      []StockCraft     `json:"crafts"`
 	CraftsAt    int64            `json:"craftsAt,omitempty"`
+	PassiveAt   int64            `json:"passiveAt,omitempty"`
 	// SourceAt holds when each listing was last read, so only stale tracked ones are reread.
 	SourceAt map[string]int64 `json:"sourceAt,omitempty"`
 	// Username names deployables ("<username>'s Wagon"), kept so rereads need no extra request.
@@ -87,32 +89,39 @@ func (s *SmithingOre) craftOutputs() (map[string]craftOutput, error) {
 	return out, nil
 }
 
-// stockCrafts reads active and passive crafts; smelting molten metal is a passive craft.
-func (s *SmithingOre) stockCrafts(playerID string) []StockCraft {
+// stockCrafts reads the active crafts and, when withPassive, the passive ones (smelting molten
+// metal runs for hours, so those are read less often); otherwise the previous passive crafts stay.
+func (s *SmithingOre) stockCrafts(playerID string, previous []StockCraft, withPassive bool) []StockCraft {
 	outputs, err := s.craftOutputs()
 	if err != nil {
-		return nil
+		return previous
 	}
-	paths := []string{"/players/" + playerID + "/crafts", "/players/" + playerID + "/passive-crafts"}
-	found := make([][]StockCraft, len(paths))
+	var active, passive []StockCraft
 	var wg sync.WaitGroup
-	for i, path := range paths {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		active = s.craftsAt(playerID, "/players/"+playerID+"/crafts", outputs, false)
+	}()
+	if withPassive {
 		wg.Add(1)
-		go func(i int, path string) {
+		go func() {
 			defer wg.Done()
-			found[i] = s.craftsAt(playerID, path, outputs)
-		}(i, path)
+			passive = s.craftsAt(playerID, "/players/"+playerID+"/passive-crafts", outputs, true)
+		}()
+	} else {
+		for _, c := range previous {
+			if c.Passive {
+				passive = append(passive, c)
+			}
+		}
 	}
 	wg.Wait()
-	crafts := []StockCraft{}
-	for _, list := range found {
-		crafts = append(crafts, list...)
-	}
-	return crafts
+	return append(append([]StockCraft{}, active...), passive...)
 }
 
 // craftsAt reads one crafts listing and keeps the player's crafts along the ingot chain.
-func (s *SmithingOre) craftsAt(playerID, path string, outputs map[string]craftOutput) []StockCraft {
+func (s *SmithingOre) craftsAt(playerID, path string, outputs map[string]craftOutput, passive bool) []StockCraft {
 	var res struct {
 		CraftResults []struct {
 			EntityID             flexibleID `json:"entityId"`
@@ -155,6 +164,7 @@ func (s *SmithingOre) craftsAt(playerID, path string, outputs map[string]craftOu
 			Building:  r.BuildingName,
 			Place:     r.ClaimName,
 			Completed: r.Completed,
+			Passive:   passive,
 		}
 		if out.step != "" && !r.Completed && r.TotalActionsRequired > r.Progress {
 			craft.RemainingEffort = r.TotalActionsRequired - r.Progress
@@ -312,11 +322,12 @@ func (s *SmithingOre) refreshTracked(playerID string, entry *smithingStockEntry,
 		// Inventories and crafts are separate BitJita requests; read them side by side.
 		var crafted []StockCraft
 		var wg sync.WaitGroup
+		passiveStale := time.Since(time.UnixMilli(current.PassiveAt)) > s.passiveTTL
 		if craftsStale {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				crafted = s.stockCrafts(playerID)
+				crafted = s.stockCrafts(playerID, current.Crafts, passiveStale)
 			}()
 		}
 		next := s.rereadSources(playerID, current, stale)
@@ -332,6 +343,9 @@ func (s *SmithingOre) refreshTracked(playerID string, entry *smithingStockEntry,
 		if craftsStale {
 			next.Crafts = crafted
 			next.CraftsAt = time.Now().UnixMilli()
+			if passiveStale {
+				next.PassiveAt = next.CraftsAt
+			}
 		}
 		s.storeStock(playerID, next)
 	}()

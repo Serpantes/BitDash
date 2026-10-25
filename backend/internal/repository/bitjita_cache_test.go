@@ -125,6 +125,7 @@ func TestSkillRankingsServeStaleWhileRefreshing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBitjitaCache: %v", err)
 	}
+	b.staleMemory = cache.New(time.Millisecond)
 	if got := BitjitaCachePolicy("/players/7/skill-rankings", ""); got != "stale" {
 		t.Fatalf("skill rankings policy = %q, want stale", got)
 	}
@@ -168,4 +169,47 @@ func TestSkillRankingsServeStaleWhileRefreshing(t *testing.T) {
 		}
 	}
 	t.Fatal("background refresh did not finish")
+}
+
+func TestConcurrentMissesShareOneUpstreamRequest(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		<-release
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	b, err := NewBitjitaCache(server.URL, t.TempDir(), cache.New(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	bodies := make([]string, 5)
+	for i := range bodies {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body, _, _, _ := b.GetAPI("/players/1224979098660014211/market", "")
+			bodies[i] = string(body)
+		}(i)
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if hits != 1 {
+		t.Errorf("upstream hits = %d, want 1 for five simultaneous requests", hits)
+	}
+	for _, body := range bodies {
+		if body != `{"ok":true}` {
+			t.Errorf("body = %q, want the shared answer", body)
+		}
+	}
+	if stats := b.UpstreamStats(false); stats.Calls != 1 || stats.Paths[0].Path != "GET /players/N/market" {
+		t.Errorf("stats = %+v, want one call to /players/N/market", stats)
+	}
 }

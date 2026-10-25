@@ -158,9 +158,11 @@ type SmithingOre struct {
 	trackedTTL time.Duration
 	// trackedWait is how long a request waits for a reread before taking the last snapshot.
 	trackedWait time.Duration
-	listTTL     time.Duration
-	stockMu     sync.Mutex
-	stocks      map[string]*smithingStockEntry
+	// passiveTTL spaces out passive crafts (smelting), which run for hours.
+	passiveTTL time.Duration
+	listTTL    time.Duration
+	stockMu    sync.Mutex
+	stocks     map[string]*smithingStockEntry
 }
 
 func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *SmithingOre {
@@ -173,6 +175,7 @@ func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *S
 		// Well under the dashboard's 10-second poll, so every poll starts a reread.
 		trackedTTL:  5 * time.Second,
 		trackedWait: 2 * time.Second,
+		passiveTTL:  time.Minute,
 		listTTL:     30 * time.Minute,
 		stocks:      map[string]*smithingStockEntry{},
 	}
@@ -609,7 +612,8 @@ func (s *SmithingOre) refreshMarket() error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			kind, id, _ := strings.Cut(key, ":")
-			body, status, err := s.bitjita.fetchUpstream("/market/"+kind+"/"+id, "")
+			// Through the shared cache, so the market block's books for the same goods count too.
+			body, status, _, err := s.bitjita.GetAPI("/market/"+kind+"/"+id, "")
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil || status != http.StatusOK {

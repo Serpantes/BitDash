@@ -83,7 +83,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("dashboard store: %v", err)
 	}
-	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 10*time.Minute)
+	// The full market listing is ~10 MB; names and buy/sell flags drift slowly.
+	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 30*time.Minute)
 	smithingOre := repository.NewSmithingOre(bitjitaDataCache, 5*time.Minute, 10*time.Minute)
 	go smithingOre.Run()
 
@@ -93,6 +94,7 @@ func main() {
 	http.HandleFunc("/api/players/", playerHandler)
 	http.HandleFunc("/api/bitjita/", bitjitaProxyHandler)
 	http.HandleFunc("/api/bitjita-icon", bitjitaIconHandler)
+	http.HandleFunc("/api/bitjita-stats", delivery.NewBitjitaStatsHandler(bitjitaDataCache))
 	http.HandleFunc("/api/item-names", itemNamesHandler)
 	http.HandleFunc("/api/market-catalog", delivery.NewMarketCatalogHandler(marketCatalog))
 	http.HandleFunc("/api/dashboard", delivery.NewDashboardHandler(dashboardStore))

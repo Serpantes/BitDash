@@ -152,7 +152,7 @@ func TestStockCraftsCountOutputsAndUnfinishedSmithing(t *testing.T) {
 	ore := NewSmithingOre(b, time.Minute, time.Minute)
 	ore.chains = []IngotChain{{Tier: 9, IngotID: "50", PieceItemID: "20", ConcentrateItemID: "30", MoltenItemID: "40"}}
 
-	crafts := ore.stockCrafts("7")
+	crafts := ore.stockCrafts("7", nil, true)
 	if len(crafts) != 3 {
 		t.Fatalf("crafts = %+v, want the player's three chain crafts", crafts)
 	}
@@ -166,8 +166,18 @@ func TestStockCraftsCountOutputsAndUnfinishedSmithing(t *testing.T) {
 	if c := byID["c2"]; c.Kind != "pieces" || c.Output != 20 || c.RemainingEffort != 0 {
 		t.Errorf("finished piece craft = %+v, want 20 pieces and no effort left", c)
 	}
-	if c := byID["p1"]; c.Kind != "molten" || c.Output != 2 {
-		t.Errorf("passive smelt = %+v, want 2 molten", c)
+	if c := byID["p1"]; c.Kind != "molten" || c.Output != 2 || !c.Passive {
+		t.Errorf("passive smelt = %+v, want 2 molten from a passive craft", c)
+	}
+
+	// Between passive reads, the passive crafts carry over and only active crafts are read.
+	again := ore.stockCrafts("7", []StockCraft{{ID: "p0", Kind: "molten", Output: 9, Passive: true}, {ID: "old", Kind: "pieces"}}, false)
+	ids := map[string]bool{}
+	for _, c := range again {
+		ids[c.ID] = true
+	}
+	if !ids["p0"] || ids["old"] || ids["p1"] || !ids["c1"] {
+		t.Errorf("crafts = %+v, want the fresh active ones plus the kept passive p0", again)
 	}
 }
 

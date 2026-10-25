@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +23,91 @@ type BitjitaCache struct {
 	apiFiles   *FileCache
 	iconFiles  *FileCache
 	liveMemory *cache.Cache
+	// staleMemory keeps rankings and leaderboards longer than live data: places change slowly
+	// and the stored answer is served while a new one loads anyway.
+	staleMemory *cache.Cache
+
+	// inflight joins concurrent identical GETs into one BitJita request.
+	inflightMu sync.Mutex
+	inflight   map[string]*upstreamCall
 
 	// Background refreshes of "stale" paths currently in flight, keyed by memory key.
 	staleRefreshing sync.Map
 	// How long a no-cache request on a "stale" path waits for BitJita before taking the stored answer.
 	staleFreshWait time.Duration
+
+	stats upstreamStats
 }
+
+// upstreamStats counts the requests that actually reach BitJita, per path with ids folded,
+// so request volume can be watched at /api/bitjita-stats.
+type upstreamStats struct {
+	mu    sync.Mutex
+	since time.Time
+	paths map[string]*UpstreamPathStats
+}
+
+type UpstreamPathStats struct {
+	Path    string  `json:"path"`
+	Calls   int     `json:"calls"`
+	Bytes   int64   `json:"bytes"`
+	Seconds float64 `json:"seconds"`
+}
+
+type UpstreamStats struct {
+	SinceUnix int64               `json:"since"`
+	Calls     int                 `json:"calls"`
+	Bytes     int64               `json:"bytes"`
+	Paths     []UpstreamPathStats `json:"paths"`
+}
+
+var idSegment = regexp.MustCompile(`\b\d{3,}\b`)
+
+func (u *upstreamStats) record(method, path string, size int, took time.Duration) {
+	key := method + " " + idSegment.ReplaceAllString(path, "N")
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.paths == nil {
+		u.paths = map[string]*UpstreamPathStats{}
+		u.since = time.Now()
+	}
+	p := u.paths[key]
+	if p == nil {
+		p = &UpstreamPathStats{Path: key}
+		u.paths[key] = p
+	}
+	p.Calls++
+	p.Bytes += int64(size)
+	p.Seconds += took.Seconds()
+}
+
+// UpstreamStats reports the requests made to BitJita since start or the last reset.
+func (b *BitjitaCache) UpstreamStats(reset bool) UpstreamStats {
+	u := &b.stats
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := UpstreamStats{SinceUnix: u.since.Unix()}
+	for _, p := range u.paths {
+		out.Calls += p.Calls
+		out.Bytes += p.Bytes
+		out.Paths = append(out.Paths, *p)
+	}
+	sort.Slice(out.Paths, func(i, j int) bool { return out.Paths[i].Calls > out.Paths[j].Calls })
+	if reset {
+		u.paths = nil
+	}
+	return out
+}
+
+type upstreamCall struct {
+	done   chan struct{}
+	body   []byte
+	status int
+	err    error
+}
+
+// rankingMemoryTTL is how long rankings and leaderboards count as fresh.
+const rankingMemoryTTL = 10 * time.Minute
 
 type staleFlight struct {
 	done chan struct{}
@@ -49,6 +130,8 @@ func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*Bitji
 		apiFiles:       apiFiles,
 		iconFiles:      iconFiles,
 		liveMemory:     liveMemory,
+		staleMemory:    cache.New(rankingMemoryTTL),
+		inflight:       map[string]*upstreamCall{},
 		staleFreshWait: 3 * time.Second,
 	}, nil
 }
@@ -159,7 +242,7 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 			return data, http.StatusOK, "DISK-HIT", nil
 		}
 	} else if !fresh {
-		if data, ok := b.liveMemory.Get(memKey); ok {
+		if data, ok := b.memoryFor(policy).Get(memKey); ok {
 			return data, http.StatusOK, "HIT", nil
 		}
 	}
@@ -181,9 +264,9 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 			}
 			return stale, http.StatusOK, "STALE", nil
 		}
-		body, status, err = b.fetchUpstream(path, query)
+		body, status, err = b.fetchShared(path, query)
 		if err == nil && status >= 200 && status < 300 {
-			b.liveMemory.Set(memKey, body)
+			b.staleMemory.Set(memKey, body)
 			_ = b.apiFiles.Set(staleKey, body)
 			return body, status, "MISS", nil
 		}
@@ -193,7 +276,7 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 		return body, status, "MISS", err
 	}
 
-	body, status, err = b.fetchUpstream(path, query)
+	body, status, err = b.fetchShared(path, query)
 	if err != nil {
 		return nil, status, "", err
 	}
@@ -218,15 +301,44 @@ func (b *BitjitaCache) refreshStale(path, query, memKey, staleKey string) *stale
 			b.staleRefreshing.Delete(memKey)
 			close(flight.done)
 		}()
-		body, status, err := b.fetchUpstream(path, query)
+		body, status, err := b.fetchShared(path, query)
 		if err != nil || status < 200 || status >= 300 {
 			return
 		}
-		b.liveMemory.Set(memKey, body)
+		b.staleMemory.Set(memKey, body)
 		_ = b.apiFiles.Set(staleKey, body)
 		flight.body, flight.ok = body, true
 	}()
 	return flight
+}
+
+func (b *BitjitaCache) memoryFor(policy string) *cache.Cache {
+	if policy == "stale" {
+		return b.staleMemory
+	}
+	return b.liveMemory
+}
+
+// fetchShared asks BitJita once for a path however many callers want it at the same moment:
+// a request already on its way is joined rather than repeated.
+func (b *BitjitaCache) fetchShared(path, query string) ([]byte, int, error) {
+	key := apiMemoryKey(path, query)
+	b.inflightMu.Lock()
+	if call, ok := b.inflight[key]; ok {
+		b.inflightMu.Unlock()
+		<-call.done
+		return call.body, call.status, call.err
+	}
+	call := &upstreamCall{done: make(chan struct{})}
+	b.inflight[key] = call
+	b.inflightMu.Unlock()
+
+	call.body, call.status, call.err = b.fetchUpstream(path, query)
+	b.inflightMu.Lock()
+	delete(b.inflight, key)
+	b.inflightMu.Unlock()
+	close(call.done)
+	return call.body, call.status, call.err
 }
 
 func (b *BitjitaCache) fetchUpstream(path, query string) ([]byte, int, error) {
@@ -241,13 +353,16 @@ func (b *BitjitaCache) fetchUpstream(path, query string) ([]byte, int, error) {
 	}
 	req.Header.Set("x-app-identifier", bitjitaAppID)
 
+	started := time.Now()
 	resp, err := b.client.Do(req)
 	if err != nil {
+		b.stats.record("GET", path, 0, time.Since(started))
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
+	b.stats.record("GET", path, len(body), time.Since(started))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -282,13 +397,16 @@ func (b *BitjitaCache) PostAPI(path string, query string, jsonBody []byte) ([]by
 	req.Header.Set("x-app-identifier", bitjitaAppID)
 	req.Header.Set("Content-Type", "application/json")
 
+	started := time.Now()
 	resp, err := b.client.Do(req)
 	if err != nil {
+		b.stats.record("POST", path, 0, time.Since(started))
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
+	b.stats.record("POST", path, len(body), time.Since(started))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -305,7 +423,9 @@ func (b *BitjitaCache) GetIcon(iconAssetName string) ([]byte, string, error) {
 		return data, "image/webp", nil
 	}
 
+	started := time.Now()
 	data, contentType, err := fetchBitjitaIcon(b.client, b.baseURL, iconAssetName)
+	b.stats.record("GET", "/icon", len(data), time.Since(started))
 	if err != nil {
 		return nil, "", err
 	}
