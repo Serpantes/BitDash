@@ -258,3 +258,26 @@ func TestStockRereadsOnlyTrackedSources(t *testing.T) {
 		t.Errorf("requests = %v, want none while the tracked listing is fresh", hits)
 	}
 }
+
+func TestExperienceRateFromGearSumsWornItemsAndActiveBuffs(t *testing.T) {
+	equip := []byte(`{"equipment": [
+		{"primary": "hand_artifact", "item": {"stats": [{"id": 24, "value": 0.12}, {"id": 50, "value": 0.029999999329447746}]}},
+		{"primary": "feet_artifact", "item": {"stats": [{"id": 50, "value": 0.07999999821186066}]}},
+		{"primary": "hand_clothing", "item": {"stats": [{"id": 38, "value": 1}, {"id": 50, "value": 0.029999999329447746}]}},
+		{"primary": "head_clothing", "item": null}
+	]}`)
+	buffs := []byte(`{"buffs": [
+		{"status": "active", "stats": [{"id": 50, "value": 0.05}]},
+		{"status": "expired", "stats": [{"id": 50, "value": 0.1}]}
+	]}`)
+	rate, ok := experienceRateFromGear(equip, buffs)
+	if !ok || rate != 1.19 {
+		t.Errorf("rate = %v, %v; want 1.19 (three items 0.14 plus an active 0.05 buff)", rate, ok)
+	}
+	if rate, ok := experienceRateFromGear(equip, nil); !ok || rate != 1.14 {
+		t.Errorf("without buffs rate = %v, want 1.14", rate)
+	}
+	if _, ok := experienceRateFromGear([]byte(`{}`), nil); ok {
+		t.Error("no equipment should fall back to the stats snapshot")
+	}
+}

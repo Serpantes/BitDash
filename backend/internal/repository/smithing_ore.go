@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -80,7 +81,11 @@ type SmithingSetup struct {
 	XPRate           float64       `json:"xpRate"`
 	Speed            float64       `json:"speed"`
 	FetchedAt        int64         `json:"fetchedAt"`
+	Format           int           `json:"format"`
 }
+
+// smithingSetupFormat changes whenever a stored setup would be computed differently.
+const smithingSetupFormat = 2
 
 // MarketBook holds an ingot's cheapest sell orders (ascending) and best buy orders
 // (descending) as [price, quantity] pairs, across all regions.
@@ -481,7 +486,7 @@ func (s *SmithingOre) loadSetupFromDisk(playerID string) *SmithingSetup {
 		return nil
 	}
 	var setup SmithingSetup
-	if err := json.Unmarshal(body, &setup); err != nil || setup.FetchedAt == 0 {
+	if err := json.Unmarshal(body, &setup); err != nil || setup.FetchedAt == 0 || setup.Format != smithingSetupFormat {
 		return nil
 	}
 	return &setup
@@ -502,7 +507,69 @@ func (s *SmithingOre) fetchSetup(playerID string) (*SmithingSetup, error) {
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("inventories: upstream status %d", status)
 	}
-	return buildSmithingSetup(statsBody, invBody, time.Now())
+	setup, err := buildSmithingSetup(statsBody, invBody, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	// The stats snapshot lags behind gear swaps, so the experience rate is summed from what is
+	// worn now and the active buffs; the snapshot stays the fallback.
+	equipBody, status, _, err := s.bitjita.GetAPI("/players/"+playerID+"/equipment", "")
+	if err == nil && status == http.StatusOK {
+		buffsBody, _, _, _ := s.bitjita.GetAPI("/players/"+playerID+"/buffs", "")
+		if rate, ok := experienceRateFromGear(equipBody, buffsBody); ok {
+			setup.XPRate = rate
+		}
+	}
+	return setup, nil
+}
+
+// experienceRateFromGear is 1 plus the Experience Rate of every worn item and active buff.
+func experienceRateFromGear(equipBody, buffsBody []byte) (float64, bool) {
+	type stat struct {
+		ID    int     `json:"id"`
+		Value float64 `json:"value"`
+	}
+	var equip struct {
+		Equipment []struct {
+			Item *struct {
+				Stats []stat `json:"stats"`
+			} `json:"item"`
+		} `json:"equipment"`
+	}
+	if err := json.Unmarshal(equipBody, &equip); err != nil || len(equip.Equipment) == 0 {
+		return 0, false
+	}
+	rate := 1.0
+	for _, slot := range equip.Equipment {
+		if slot.Item == nil {
+			continue
+		}
+		for _, st := range slot.Item.Stats {
+			if st.ID == statExperienceRate {
+				rate += st.Value
+			}
+		}
+	}
+	var buffs struct {
+		Buffs []struct {
+			Status string `json:"status"`
+			Stats  []stat `json:"stats"`
+		} `json:"buffs"`
+	}
+	if json.Unmarshal(buffsBody, &buffs) == nil {
+		for _, b := range buffs.Buffs {
+			if b.Status != "active" {
+				continue
+			}
+			for _, st := range b.Stats {
+				if st.ID == statExperienceRate {
+					rate += st.Value
+				}
+			}
+		}
+	}
+	// Item values are stored as float32; keep the rate to a whole percent's precision.
+	return math.Round(rate*10000) / 10000, true
 }
 
 func buildSmithingSetup(statsBody, invBody []byte, now time.Time) (*SmithingSetup, error) {
@@ -568,6 +635,7 @@ func buildSmithingSetup(statsBody, invBody []byte, now time.Time) (*SmithingSetu
 		XPRate:     stat(statExperienceRate, 100) / 100,
 		Speed:      stat(statCraftingSpeed, 1) * stat(statSmithingSpeed, 1),
 		FetchedAt:  now.UnixMilli(),
+		Format:     smithingSetupFormat,
 	}
 	if tool != nil {
 		setup.ProgressPerSwing = float64(tool.Power) + setup.SkillPower
