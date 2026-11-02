@@ -26,7 +26,7 @@ function storeLocal(json) {
 
 const pinned = ref(load())
 
-// The server copy (DASHBOARD_FILE on the backend) is the source of truth;
+// The server copy (this visitor's file under DASHBOARD_DIR) is the source of truth;
 // localStorage is only a fast cache. serverRev stays null until the server
 // answered once, and nothing is written to the server before that, so a tab
 // that has not seen the saved blocks can never overwrite them.
@@ -81,7 +81,14 @@ export async function initPinnedSync() {
   if (state.rev === 0) {
     serverRev = 0
     savedJson = '[]'
-    if (pinned.value.length) await flush()
+    if (pinned.value.length) {
+      await flush()
+    } else if (state.blocks?.length) {
+      // First visit: start from the server's template. savedJson matches it,
+      // so nothing is written until the visitor changes something.
+      savedJson = JSON.stringify(state.blocks)
+      pinned.value = state.blocks
+    }
   } else {
     adoptServerState(state)
   }

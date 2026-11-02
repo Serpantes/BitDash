@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 type DashboardStore struct {
 	path       string
 	backupDir  string
+	initial    json.RawMessage
 	keep       int
 	backupGap  time.Duration
 	mu         sync.Mutex
@@ -34,22 +36,26 @@ type DashboardState struct {
 var ErrDashboardConflict = errors.New("dashboard was changed elsewhere")
 
 func NewDashboardStore(path string) (*DashboardStore, error) {
-	s := &DashboardStore{
-		path:      path,
-		backupDir: filepath.Join(filepath.Dir(path), "dashboard-backups"),
-		keep:      200,
-		backupGap: 10 * time.Minute,
-	}
-	if err := os.MkdirAll(s.backupDir, 0o755); err != nil {
-		return nil, err
-	}
+	s := newDashboardStore(path)
 	if _, err := s.Load(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	return s, nil
 }
 
-// Load returns the saved state, or rev 0 with no blocks when nothing was saved yet.
+// newDashboardStore creates no files: directories appear on the first save,
+// so visitors who only look leave nothing on disk.
+func newDashboardStore(path string) *DashboardStore {
+	return &DashboardStore{
+		path:      path,
+		backupDir: filepath.Join(filepath.Dir(path), "dashboard-backups"),
+		initial:   json.RawMessage("[]"),
+		keep:      200,
+		backupGap: 10 * time.Minute,
+	}
+}
+
+// Load returns the saved state, or rev 0 with the initial blocks when nothing was saved yet.
 func (s *DashboardStore) Load() (DashboardState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -59,7 +65,7 @@ func (s *DashboardStore) Load() (DashboardState, error) {
 func (s *DashboardStore) load() (DashboardState, error) {
 	raw, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return DashboardState{Blocks: json.RawMessage("[]")}, nil
+		return DashboardState{Blocks: s.initial}, nil
 	}
 	if err != nil {
 		return DashboardState{}, err
@@ -101,6 +107,9 @@ func (s *DashboardStore) Save(baseRev int64, blocks json.RawMessage, force bool)
 	if err != nil {
 		return DashboardState{}, err
 	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return DashboardState{}, err
+	}
 	if err := writeFileAtomic(s.path, payload); err != nil {
 		return DashboardState{}, err
 	}
@@ -117,6 +126,9 @@ func (s *DashboardStore) backup(current DashboardState, nextCount int) {
 	}
 	payload, err := json.MarshalIndent(current, "", "  ")
 	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(s.backupDir, 0o755); err != nil {
 		return
 	}
 	name := fmt.Sprintf("dashboard-%s-rev%d.json", time.Now().UTC().Format("20060102T150405"), current.Rev)
@@ -145,6 +157,62 @@ func (s *DashboardStore) pruneBackups() {
 	for _, name := range names[:len(names)-s.keep] {
 		os.Remove(filepath.Join(s.backupDir, name)) //nolint:errcheck
 	}
+}
+
+// DashboardStores keeps a separate DashboardStore for every visitor under
+// dir/<visitorID>/, so visitors never see or overwrite each other's blocks.
+type DashboardStores struct {
+	dir      string
+	template json.RawMessage
+	mu       sync.Mutex
+	stores   map[string]*DashboardStore
+}
+
+var (
+	ErrBadVisitorID  = errors.New("bad visitor id")
+	visitorIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+)
+
+// ValidVisitorID reports whether id is safe to use as a directory name.
+func ValidVisitorID(id string) bool {
+	return visitorIDPattern.MatchString(id)
+}
+
+// NewDashboardStores serves dashboards from dir. A visitor who saved nothing
+// yet gets the blocks saved in templateFile, or none when it is empty.
+func NewDashboardStores(dir, templateFile string) (*DashboardStores, error) {
+	s := &DashboardStores{dir: dir, template: json.RawMessage("[]"), stores: map[string]*DashboardStore{}}
+	if templateFile != "" {
+		t, err := NewDashboardStore(templateFile)
+		if err != nil {
+			return nil, err
+		}
+		state, err := t.Load()
+		if err != nil {
+			return nil, err
+		}
+		if state.Rev == 0 {
+			return nil, fmt.Errorf("template %s has no saved dashboard", templateFile)
+		}
+		s.template = state.Blocks
+	}
+	return s, nil
+}
+
+// For returns the store of one visitor.
+func (s *DashboardStores) For(visitorID string) (*DashboardStore, error) {
+	if !ValidVisitorID(visitorID) {
+		return nil, ErrBadVisitorID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	store, ok := s.stores[visitorID]
+	if !ok {
+		store = newDashboardStore(filepath.Join(s.dir, visitorID, "dashboard.json"))
+		store.initial = s.template
+		s.stores[visitorID] = store
+	}
+	return store, nil
 }
 
 func writeFileAtomic(path string, payload []byte) error {

@@ -76,3 +76,62 @@ func TestDashboardStoreRejectsNonArray(t *testing.T) {
 		t.Fatal("expected error for non-array blocks")
 	}
 }
+
+func TestDashboardStoresKeepVisitorsApart(t *testing.T) {
+	dir := t.TempDir()
+	stores, err := NewDashboardStores(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := stores.For("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	bob, _ := stores.For("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if _, err := alice.Save(0, json.RawMessage(`[{"inventoryId":"a"}]`), false); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := bob.Load()
+	if got.Rev != 0 || string(got.Blocks) != "[]" {
+		t.Fatalf("bob sees %+v", got)
+	}
+	if _, err := bob.Save(0, json.RawMessage(`[]`), false); err != nil {
+		t.Fatalf("bob's first save should not conflict with alice: %v", err)
+	}
+	again, _ := stores.For("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if got, _ := again.Load(); string(got.Blocks) != `[{"inventoryId":"a"}]` {
+		t.Fatalf("alice lost her blocks: %s", got.Blocks)
+	}
+}
+
+func TestDashboardStoresLoadCreatesNothing(t *testing.T) {
+	dir := t.TempDir()
+	stores, _ := NewDashboardStores(dir, "")
+	s, _ := stores.For("cccccccccccccccccccccccccccccccc")
+	s.Load()
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("load left %d entries on disk", len(entries))
+	}
+}
+
+func TestDashboardStoresStartFromTemplate(t *testing.T) {
+	template := filepath.Join(t.TempDir(), "template.json")
+	tpl, _ := NewDashboardStore(template)
+	tpl.Save(0, json.RawMessage(`[{"inventoryId":"demo"}]`), false)
+
+	stores, err := NewDashboardStores(t.TempDir(), template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := stores.For("dddddddddddddddddddddddddddddddd")
+	got, _ := s.Load()
+	if got.Rev != 0 || string(got.Blocks) != `[{"inventoryId":"demo"}]` {
+		t.Fatalf("new visitor = %+v", got)
+	}
+}
+
+func TestDashboardStoresRejectBadVisitorID(t *testing.T) {
+	stores, _ := NewDashboardStores(t.TempDir(), "")
+	for _, id := range []string{"", "../etc", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "abc"} {
+		if _, err := stores.For(id); !errors.Is(err, ErrBadVisitorID) {
+			t.Fatalf("For(%q) err = %v", id, err)
+		}
+	}
+}

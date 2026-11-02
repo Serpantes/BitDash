@@ -11,7 +11,10 @@ services:
       ITEM_NAME_FILE: /var/lib/bitdash/item-names.json
       BITJITA_CACHE_DIR: /var/lib/bitdash/bitjita-cache
       XP_HISTORY_DIR: /var/lib/bitdash/xp-history
-      DASHBOARD_FILE: /var/lib/bitdash/dashboard.json
+      DASHBOARD_DIR: /var/lib/bitdash/dashboards
+      DASHBOARD_TEMPLATE_FILE: ${DASHBOARD_TEMPLATE_FILE:-}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-10}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-300}
       PLAYER_RESPONSE_FILE: /var/lib/bitdash/players.json
       BITJITA_BASE_URL: ${BITJITA_BASE_URL:-https://bitjita.com}
       EXTERNAL_API_URL: ${EXTERNAL_API_URL:-https://api.example.com/data}

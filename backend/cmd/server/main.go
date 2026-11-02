@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"bitdash/backend/internal/cache"
@@ -25,7 +26,8 @@ func main() {
 	itemNameFile := os.Getenv("ITEM_NAME_FILE")
 	bitjitaCacheDir := os.Getenv("BITJITA_CACHE_DIR")
 	xpHistoryDir := os.Getenv("XP_HISTORY_DIR")
-	dashboardFile := os.Getenv("DASHBOARD_FILE")
+	dashboardDir := os.Getenv("DASHBOARD_DIR")
+	dashboardTemplateFile := os.Getenv("DASHBOARD_TEMPLATE_FILE")
 	if external == "" {
 		external = "https://api.example.com/data"
 	}
@@ -45,9 +47,11 @@ func main() {
 		xpHistoryDir = "/var/lib/bitdash/xp-history"
 	}
 
-	if dashboardFile == "" {
-		dashboardFile = "/var/lib/bitdash/dashboard.json"
+	if dashboardDir == "" {
+		dashboardDir = "/var/lib/bitdash/dashboards"
 	}
+	rateLimitRPS := envFloat("RATE_LIMIT_RPS", 10)
+	rateLimitBurst := int(envFloat("RATE_LIMIT_BURST", 300))
 
 	liveCacheTTL := 2 * time.Minute
 
@@ -86,7 +90,7 @@ func main() {
 		log.Fatalf("item name store: %v", err)
 	}
 	itemNamesHandler := delivery.NewItemNamesHandler(bitjitaDataCache, itemNameStore)
-	dashboardStore, err := repository.NewDashboardStore(dashboardFile)
+	dashboardStores, err := repository.NewDashboardStores(dashboardDir, dashboardTemplateFile)
 	if err != nil {
 		log.Fatalf("dashboard store: %v", err)
 	}
@@ -107,7 +111,7 @@ func main() {
 	http.HandleFunc("/api/market-catalog", delivery.NewMarketCatalogHandler(marketCatalog))
 	http.HandleFunc("/api/inventory-slots", delivery.NewInventorySlotsHandler(bitjitaDataCache.InventorySlots()))
 	http.HandleFunc("/api/storage-capacity", delivery.NewStorageCapacityHandler(storageCapacity))
-	http.HandleFunc("/api/dashboard", delivery.NewDashboardHandler(dashboardStore))
+	http.Handle("/api/dashboard", delivery.WithVisitor(delivery.NewDashboardHandler(dashboardStores)))
 	http.HandleFunc("/api/xp-history/", delivery.NewXPHistoryHandler(xpHistory))
 	http.HandleFunc("/api/smithing-ore/", delivery.NewSmithingOreHandler(smithingOre))
 	http.Handle("/map-embed", delivery.NewMapEmbedHandler())
@@ -126,15 +130,24 @@ func main() {
 
 	server := &http.Server{
 		Addr:         addr,
+		Handler:      delivery.NewRateLimiter(rateLimitRPS, rateLimitBurst).Wrap(http.DefaultServeMux),
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 3 * time.Minute,
 	}
 
 	log.Printf(
-		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, dashboard -> %s, player-response-file -> %s, item-name-file -> %s",
-		addr, external, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, dashboardFile, playerResponseFile, itemNameFile,
+		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, dashboards -> %s, player-response-file -> %s, item-name-file -> %s, rate limit %.0f/s burst %d",
+		addr, external, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, dashboardDir, playerResponseFile, itemNameFile, rateLimitRPS, rateLimitBurst,
 	)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func envFloat(name string, fallback float64) float64 {
+	v, err := strconv.ParseFloat(os.Getenv(name), 64)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
 }
