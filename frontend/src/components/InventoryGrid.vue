@@ -1,55 +1,66 @@
 <template>
   <div
-    ref="root"
     class="inventory-grid"
     :class="{ 'inventory-grid--arranging': arrangeable, 'inventory-grid--fill': fill }"
     :style="{ '--slot-size': `${slotPx}px`, '--inventory-half-cols': columns * 2 }"
   >
-    <div v-for="(panel, p) in panels" :key="p" class="inventory-panel">
-      <div
-        v-for="part in panel.parts"
-        :key="`${part.kind}-${part.offset}`"
-        class="inventory-section"
-        :class="`inventory-section--${part.kind}`"
-      >
-        <div
-          v-for="(pocket, i) in part.pockets"
-          :key="part.offset + i"
-          class="inventory-slot"
-          :class="{
-            'inventory-slot--empty': !pocket,
-            'inventory-slot--dragged': drag.kind === part.kind && drag.from === part.offset + i,
-            'inventory-slot--target': drag.kind === part.kind && drag.over === part.offset + i,
-          }"
-          :style="rowStart(part, i)"
-          :draggable="arrangeable && Boolean(pocket)"
-          @dragstart="onDragStart(part.kind, part.offset + i, $event)"
-          @dragover="onDragOver(part.kind, part.offset + i, $event)"
-          @drop.prevent="onDrop(part.kind, part.offset + i)"
-          @dragend="endDrag"
-        >
-          <template v-if="pocket">
-            <ItemCard
-              variant="mini"
-              badge
-              :name="resolveItem(pocket.contents).name"
-              :icon-asset-name="resolveItem(pocket.contents).iconAssetName"
-              :item-type="resolveItem(pocket.contents).type"
-              :tier="resolveItem(pocket.contents).tier"
-              :rarity-str="resolveItem(pocket.contents).rarityStr"
-              :hint="`× ${formatNumber(pocket.contents.quantity ?? 0)}`"
-            />
-            <span v-if="pocket.contents.quantity > 1" class="slot-qty">{{ compactQuantity(pocket.contents.quantity) }}</span>
-          </template>
+    <div ref="tray" class="inventory-tray">
+      <div class="inventory-panels">
+        <div v-for="(panel, p) in panels" :key="p" class="inventory-panel">
+          <div
+            v-for="part in panel.parts"
+            :key="`${part.kind}-${part.offset}`"
+            class="inventory-section"
+            :class="`inventory-section--${part.kind}`"
+          >
+            <div
+              v-for="(pocket, i) in part.pockets"
+              :key="part.offset + i"
+              class="inventory-slot"
+              :class="{
+                'inventory-slot--empty': !pocket,
+                'inventory-slot--dragged': drag.kind === part.kind && drag.from === part.offset + i,
+                'inventory-slot--target': drag.kind === part.kind && drag.over === part.offset + i,
+              }"
+              :style="rowStart(part, i)"
+              :draggable="arrangeable && Boolean(pocket)"
+              @dragstart="onDragStart(part.kind, part.offset + i, $event)"
+              @dragover="onDragOver(part.kind, part.offset + i, $event)"
+              @drop.prevent="onDrop(part.kind, part.offset + i)"
+              @dragend="endDrag"
+            >
+              <template v-if="pocket">
+                <ItemCard
+                  variant="mini"
+                  badge
+                  :name="resolveItem(pocket.contents).name"
+                  :icon-asset-name="resolveItem(pocket.contents).iconAssetName"
+                  :item-type="resolveItem(pocket.contents).type"
+                  :tier="resolveItem(pocket.contents).tier"
+                  :rarity-str="resolveItem(pocket.contents).rarityStr"
+                  :hint="`× ${formatNumber(pocket.contents.quantity ?? 0)}`"
+                />
+                <span v-if="pocket.contents.quantity > 1" class="slot-qty">{{ compactQuantity(pocket.contents.quantity) }}</span>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+    <div v-if="stats.length" class="inventory-foot">
+      <span v-for="stat in stats" :key="stat.kind" class="inventory-stat">
+        <span class="inventory-stat__label">{{ stat.label }}</span>
+        <span class="inventory-stat__bar"><span :style="{ width: `${stat.share * 100}%` }"></span></span>
+        <span class="inventory-stat__count">{{ stat.used }}<span class="inventory-stat__of">/{{ stat.total }}</span></span>
+      </span>
+      <span v-if="live" class="inventory-live" :title="t('inventoryGrid.liveTitle')">{{ t('inventoryGrid.live') }}</span>
     </div>
   </div>
 </template>
 
 <script>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { formatNumber } from '../i18n'
+import { formatNumber, t } from '../i18n'
 import { useItemCache } from '../composables/useItemCache'
 import { compactQuantity, GAME_COLS, inventoryLayout, inventoryPanels, moveInSection } from '../inventoryLayout'
 import ItemCard from './ItemCard.vue'
@@ -70,11 +81,13 @@ export default {
     fill: { type: Boolean, default: true },
     // Stacks can be dragged to other pockets; emits "arrange" with { kind, moves }.
     arrangeable: { type: Boolean, default: false },
+    // The pockets come straight from the game's database replica.
+    live: { type: Boolean, default: false },
   },
   emits: ['arrange'],
   setup(props, { emit }) {
     const { resolveItem } = useItemCache()
-    const root = ref(null)
+    const tray = ref(null)
     const box = reactive({ width: 0, height: 0 })
     const layout = computed(() => {
       if (props.fill && box.width && box.height) return inventoryLayout(props.sections, props.split, box.width, box.height)
@@ -83,15 +96,22 @@ export default {
     const columns = computed(() => layout.value.cols)
     const panels = computed(() => layout.value.panels)
     const slotPx = computed(() => Math.floor(layout.value.slot * 10) / 10)
+    const stats = computed(() => [
+      { kind: 'item', pockets: props.sections.items },
+      { kind: 'cargo', pockets: props.sections.cargo },
+    ].filter(({ pockets }) => pockets.length).map(({ kind, pockets }) => {
+      const used = pockets.filter(Boolean).length
+      return { kind, label: t(`inventoryGrid.${kind}`), used, total: pockets.length, share: used / pockets.length }
+    }))
 
     let observer = null
     onMounted(() => {
-      if (!props.fill || !root.value) return
+      if (!props.fill || !tray.value) return
       observer = new ResizeObserver(([entry]) => {
         box.width = entry.contentRect.width
         box.height = entry.contentRect.height
       })
-      observer.observe(root.value)
+      observer.observe(tray.value)
     })
     onBeforeUnmount(() => observer?.disconnect())
 
@@ -142,7 +162,7 @@ export default {
     }
 
     return {
-      root, columns, panels, slotPx, rowStart, resolveItem, formatNumber, compactQuantity,
+      tray, columns, panels, slotPx, stats, t, rowStart, resolveItem, formatNumber, compactQuantity,
       drag, onDragStart, onDragOver, onDrop, endDrag,
     }
   },
@@ -152,18 +172,91 @@ export default {
 <style scoped>
 .inventory-grid {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-content: center;
-  align-items: flex-start;
-  gap: 14px;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
   min-height: 0;
 }
 .inventory-grid--fill {
   flex: 1;
   width: 100%;
+}
+/* A recessed board like the game's storage window: a soft glow from the top and a faint
+   honeycomb that fades towards the edges, so the room around the pockets reads as part of it. */
+.inventory-tray {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  padding: 8px 6px;
+  border: 1px solid rgba(233, 223, 196, 0.1);
+  border-radius: 4px;
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(74, 128, 186, 0.16), transparent 70%),
+    linear-gradient(180deg, rgba(14, 13, 22, 0.35), rgba(14, 13, 22, 0.55));
+  box-shadow: inset 0 1px 6px rgba(0, 0, 0, 0.45);
   overflow: hidden;
+}
+.inventory-tray::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='52'%3E%3Cpath d='M0 8.66L15 0l15 8.66v17.32L15 34.64 0 25.98zM15 34.64V52' fill='none' stroke='%23e9dfc4' stroke-opacity='0.07'/%3E%3C/svg%3E");
+  background-size: 30px 52px;
+  background-position: center;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 35%, #000 100%);
+  mask-image: radial-gradient(closest-side, transparent 35%, #000 100%);
+}
+.inventory-grid--fill .inventory-tray { flex: 1; }
+.inventory-panels {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: center;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+.inventory-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 16px;
+  padding: 0 2px;
+  font-family: var(--font-title);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.inventory-stat { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.inventory-stat__bar {
+  position: relative;
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(233, 223, 196, 0.12);
+  overflow: hidden;
+}
+.inventory-stat__bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--cream); opacity: 0.75; }
+.inventory-stat__count { color: var(--text-soft); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.inventory-stat__of { color: var(--muted); }
+.inventory-live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--success);
+}
+.inventory-live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
 }
 .inventory-panel {
   display: flex;

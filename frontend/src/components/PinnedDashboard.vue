@@ -227,6 +227,7 @@
               class="dash-inventory"
               :sections="inventorySectionsFor(item.inventoryId)"
               :split="inventorySplit(item.inventoryId)"
+              :live="Boolean(state[item.inventoryId]?.inventory?.livePockets)"
               :arrangeable="Boolean(arranging[item.inventoryId])"
               @arrange="arrangeInventory(item.inventoryId, $event)"
             />
@@ -500,7 +501,7 @@ import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpH
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
 import { formatNumber, intlLocale, t } from '../i18n'
-import { ensureStorageCapacities, hasContents, inventoryLayout, inventorySections, MIN_SLOT_PX, saveArrangement } from '../inventoryLayout'
+import { ensureStorageCapacities, hasContents, inventoryLayout, inventorySections, MIN_SLOT_PX, pocketArea, saveArrangement } from '../inventoryLayout'
 import AppIcon from './AppIcon.vue'
 import ItemCard from './ItemCard.vue'
 import InventoryGrid from './InventoryGrid.vue'
@@ -1422,7 +1423,8 @@ export default {
       return inventorySections(inventorySlots(inventoryId), meta)
     }
     function inventoryFitsSmallTile(inventoryId) {
-      const { slot } = inventoryLayout(inventorySectionsFor(inventoryId), false, INVENTORY_BODY_WIDTH_PX, INVENTORY_BODY_HEIGHT_PX)
+      const area = pocketArea(INVENTORY_BODY_WIDTH_PX, INVENTORY_BODY_HEIGHT_PX)
+      const { slot } = inventoryLayout(inventorySectionsFor(inventoryId), false, area.width, area.height)
       return slot >= MIN_SLOT_PX
     }
     // A wide inventory tile puts its cargo next to the items instead of below them.

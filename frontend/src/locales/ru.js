@@ -117,6 +117,12 @@ export default {
     trades: 'Сделок',
     aria: 'Средняя цена по дням с {from} по {to}; последняя {last}',
   },
+  inventoryGrid: {
+    item: 'Предметы',
+    cargo: 'Груз',
+    live: 'в игре',
+    liveTitle: 'Карманы прямо из игры, обновляются по ходу',
+  },
   inventoryPage: {
     searchPlaceholder: 'Введи имя персонажа...',
     find: 'Найти',
