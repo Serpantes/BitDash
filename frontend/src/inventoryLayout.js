@@ -13,16 +13,6 @@ export const SLOT_RATIO = 64 / 52
 // Below this width a tile is too cramped and the storage takes a wide one.
 export const MIN_SLOT_PX = 26
 const MAX_SLOT_PX = 60
-// Room the inventory grid's frame takes from its box: the tray's padding and border, and the
-// counts line below it.
-const TRAY_INSET_X_PX = 14
-const TRAY_INSET_Y_PX = 18
-const FOOT_PX = 22
-
-// The space left for pockets when an inventory grid is given a box of this size.
-export function pocketArea(width, height) {
-  return { width: width - TRAY_INSET_X_PX, height: height - TRAY_INSET_Y_PX - FOOT_PX }
-}
 
 const CAPACITY_STORAGE_KEY = 'bitdash.storageCapacity'
 const CAPACITY_TTL_MS = 24 * 60 * 60 * 1000

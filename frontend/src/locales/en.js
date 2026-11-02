@@ -112,12 +112,6 @@ export default {
     trades: 'Trades',
     aria: 'Daily average price from {from} to {to}; latest {last}',
   },
-  inventoryGrid: {
-    item: 'Items',
-    cargo: 'Cargo',
-    live: 'live',
-    liveTitle: 'Pockets straight from the game, updated as they change',
-  },
   inventoryPage: {
     searchPlaceholder: 'Enter a character name...',
     find: 'Find',
