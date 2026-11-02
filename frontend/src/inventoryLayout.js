@@ -93,13 +93,20 @@ export function inventorySections(pockets, meta) {
   }
 }
 
-function sectionRows(count, cols) {
-  return count ? Math.ceil(count / cols) : 0
+// A cargo pocket is two item pockets wide, as in game.
+function cargoPerRow(cols) {
+  return Math.max(1, Math.floor(cols / 2))
+}
+
+function sectionRows(sections, cols) {
+  return [
+    sections.items.length ? Math.ceil(sections.items.length / cols) : 0,
+    sections.cargo.length ? Math.ceil(sections.cargo.length / cargoPerRow(cols)) : 0,
+  ]
 }
 
 export function sectionsHeight(sections, cols) {
-  const rows = [sections.items.length, sections.cargo.length].map((n) => sectionRows(n, cols))
-  const used = rows.filter(Boolean)
+  const used = sectionRows(sections, cols).filter(Boolean)
   if (!used.length) return 0
   const total = used.reduce((a, b) => a + b, 0)
   return total * (SLOT_PX + SLOT_GAP_PX) - SLOT_GAP_PX * used.length + SECTION_GAP_PX * (used.length - 1)
@@ -109,18 +116,22 @@ export function columnsForWidth(width) {
   return Math.max(1, Math.floor((width + SLOT_GAP_PX) / (SLOT_PX + SLOT_GAP_PX)))
 }
 
-// One column count for both sections, so their pockets line up. Prefers the widest grid that
-// splits every section into full rows (8 × 8 for a bank) and still fits the height, else the
-// grid with the fewest rows.
+// One column count for both sections, so their pockets line up (an even one when there is
+// cargo). Prefers the widest grid that splits every section into full rows (8 × 8 for a bank)
+// and still fits the height, else the widest grid allowed.
 export function inventoryColumns(sections, maxCols, maxHeight = Infinity) {
-  const counts = [sections.items.length, sections.cargo.length].filter(Boolean)
-  if (!counts.length) return Math.max(1, maxCols)
-  const largest = Math.max(...counts)
-  const minCols = Math.min(maxCols, 4)
-  for (let cols = Math.min(maxCols, largest); cols >= minCols; cols -= 1) {
-    if (counts.every((n) => n % cols === 0) && sectionsHeight(sections, cols) <= maxHeight) return cols
+  const items = sections.items.length
+  const cargo = sections.cargo.length
+  if (!items && !cargo) return Math.max(1, maxCols)
+  const allowed = (cols) => !cargo || cols % 2 === 0
+  const widest = Math.min(maxCols, Math.max(items, cargo * 2))
+  const minCols = Math.min(widest, 4)
+  for (let cols = widest; cols >= minCols; cols -= 1) {
+    const full = items % cols === 0 && cargo % cargoPerRow(cols) === 0
+    if (allowed(cols) && full && sectionsHeight(sections, cols) <= maxHeight) return cols
   }
-  return Math.max(1, Math.min(maxCols, largest))
+  for (let cols = widest; cols > 1; cols -= 1) if (allowed(cols)) return cols
+  return Math.max(1, widest)
 }
 
 export function compactQuantity(quantity) {

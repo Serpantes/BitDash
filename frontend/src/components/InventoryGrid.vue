@@ -74,7 +74,7 @@ export default {
   justify-content: center;
   width: 100%;
 }
-.inventory-section--cargo {
+.inventory-section + .inventory-section--cargo {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px solid var(--frame-soft);
@@ -89,6 +89,10 @@ export default {
   border: 1px solid var(--slot-edge);
   background: var(--slot);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3), inset 0 4px 6px rgba(0, 0, 0, 0.18);
+}
+.inventory-section--cargo .inventory-slot {
+  grid-column: span 2;
+  aspect-ratio: 67 / 32;
 }
 .inventory-section--cargo .inventory-slot--empty { border-style: dashed; }
 .inventory-slot :deep(.item-card--mini) { width: 100%; height: 100%; }
