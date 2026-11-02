@@ -119,3 +119,24 @@ func TestBuildStorageCapacity(t *testing.T) {
 		t.Fatalf("storages %v, want %v", got.Storages, want)
 	}
 }
+
+func TestInventorySlotsHandArrangedLayoutIsKept(t *testing.T) {
+	s := NewInventorySlots("")
+	const url = "/players/1/inventories"
+	body := playerInventoriesBody("10:5:0", "20:1:0", "900:3:1")
+	s.Annotate(url, "", body)
+	if err := s.SetLayout("864691128538634525", []SlotPlacement{{Slot: 2, ItemID: "10", Quantity: "5"}, {Slot: 7, ItemID: "20", Quantity: "1"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := annotatedSlots(t, s.Annotate(url, "", body)); !reflect.DeepEqual(got, []int{2, 7, 0}) {
+		t.Fatalf("slots %v, want [2 7 0]", got)
+	}
+	// Serving the same listing again changes nothing; a later withdrawal keeps the others.
+	s.Annotate(url, "", body)
+	if got := annotatedSlots(t, s.Annotate(url, "", playerInventoriesBody("20:1:0"))); !reflect.DeepEqual(got, []int{7}) {
+		t.Fatalf("slots %v, want [7]", got)
+	}
+	if err := s.SetLayout("864691128538634525", []SlotPlacement{{Slot: 3, ItemID: "10"}, {Slot: 3, ItemID: "20"}}, nil); err == nil {
+		t.Fatal("slots out of order accepted")
+	}
+}

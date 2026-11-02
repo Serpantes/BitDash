@@ -105,6 +105,14 @@
               @click.stop="openEditSkillWizard(item.inventoryId)"
             ><AppIcon name="swap" :size="14" /></button>
             <button
+              v-if="isInventoryBlock(item)"
+              type="button"
+              class="bc-icon-btn"
+              :class="{ 'bc-icon-btn--active': arranging[item.inventoryId] }"
+              :title="arranging[item.inventoryId] ? t('dashboard.arrangeDone') : t('dashboard.arrange')"
+              @click.stop="arranging[item.inventoryId] = !arranging[item.inventoryId]"
+            ><AppIcon :name="arranging[item.inventoryId] ? 'check' : 'move'" :size="14" /></button>
+            <button
               v-if="blockCanResize(item)"
               type="button"
               class="bc-icon-btn"
@@ -220,6 +228,8 @@
               :sections="inventorySectionsFor(item.inventoryId)"
               :max-cols="inventoryMaxCols(item.inventoryId)"
               :max-height="INVENTORY_BODY_HEIGHT_PX"
+              :arrangeable="Boolean(arranging[item.inventoryId])"
+              @arrange="arrangeInventory(item.inventoryId, $event)"
             />
           </template>
         </div>
@@ -491,7 +501,7 @@ import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpH
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
 import { formatNumber, intlLocale, t } from '../i18n'
-import { columnsForWidth, ensureStorageCapacities, hasContents, inventoryColumns, inventorySections, sectionsHeight } from '../inventoryLayout'
+import { columnsForWidth, ensureStorageCapacities, hasContents, inventoryColumns, inventorySections, saveArrangement, sectionsHeight } from '../inventoryLayout'
 import AppIcon from './AppIcon.vue'
 import ItemCard from './ItemCard.vue'
 import InventoryGrid from './InventoryGrid.vue'
@@ -533,6 +543,8 @@ export default {
   setup() {
     const { pinned, isPinned, unpin, pinBlock, setDashboardLayouts, updatePinnedBlock } = usePinned()
     const state = reactive({})
+    // Inventory tiles whose stacks are being dragged into their in-game pockets.
+    const arranging = reactive({})
     const rootRef = ref(null)
     const gridRef = ref(null)
     const wizardSearchInput = ref(null)
@@ -1410,6 +1422,14 @@ export default {
       const cols = inventoryColumns(sections, INVENTORY_SMALL_COLS, INVENTORY_BODY_HEIGHT_PX)
       return sectionsHeight(sections, cols) <= INVENTORY_BODY_HEIGHT_PX
     }
+    function isInventoryBlock(item) {
+      return !isMapBlock(item) && !isCharacterBlock(item) && !isSkillBlock(item) && !isPlannerBlock(item) && !isMarketBlock(item)
+    }
+    function arrangeInventory(inventoryId, { kind, moves }) {
+      saveArrangement(inventoryId, kind, moves).catch((e) => {
+        ensureInventoryState(inventoryId).error = e.message
+      })
+    }
     function inventoryMaxCols(inventoryId) {
       return dashboardCardSpan(inventoryId) === 2 ? INVENTORY_LARGE_COLS : INVENTORY_SMALL_COLS
     }
@@ -2152,7 +2172,7 @@ export default {
       pinned, isPinned, unpin, state, drag, dropCells, gridArea, onTilePointerDown, layoutInfo, rootRef, wizard, wizardTitle, wizardKicker, wizardSearchesPlayers,
       gridRef, wizardSearchInput, dashboardCols, dashboardUpdatedLabel, dashboardRefreshing,
       dashboardCardClass, dashboardCardStyle,
-      inventorySectionsFor, inventoryMaxCols, INVENTORY_BODY_HEIGHT_PX, hasInventoryGrid, itemMeta,
+      inventorySectionsFor, inventoryMaxCols, isInventoryBlock, arranging, arrangeInventory, INVENTORY_BODY_HEIGHT_PX, hasInventoryGrid, itemMeta,
       blockType, blockHeading, blockCanResize, blockIsLarge, toggleBlockSize, vitalsRows,
       isCharacterBlock, isMarketBlock, isPlannerBlock, isMapBlock,
       mapTileSize, setMapTileSize, marketTileSize, setMarketTileSize,
@@ -2247,6 +2267,10 @@ export default {
   .dash-card .dash-card-tools { opacity: 0; transition: opacity 0.15s; }
   .dash-card:hover .dash-card-tools,
   .dash-card:focus-within .dash-card-tools { opacity: 1; }
+}
+.bc-icon-btn--active { color: var(--cream); background: rgba(233, 223, 196, 0.14); }
+@media (hover: hover) {
+  .dash-card .dash-card-tools:has(.bc-icon-btn--active) { opacity: 1; }
 }
 .dash-flag {
   padding: 1px 6px;

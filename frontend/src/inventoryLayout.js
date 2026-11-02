@@ -140,3 +140,34 @@ export function compactQuantity(quantity) {
   if (n < 1e6) return `${Math.floor(n / 1000)}K`
   return `${Math.floor(n / 1e5) / 10}M`
 }
+
+// Where every filled pocket of a section goes when the stack at `from` is dropped on `to`.
+// Pockets keep their in-game order (BitJita lists them that way), so the stacks in the way are
+// pushed along; null when they would be pushed off the grid.
+export function moveInSection(placed, from, to) {
+  const filled = placed.map((pocket, i) => (pocket ? i : -1)).filter((i) => i >= 0)
+  const k = filled.indexOf(from)
+  if (k < 0 || from === to || to < 0 || to >= placed.length) return null
+  const slots = [...filled]
+  slots[k] = to
+  for (let i = k + 1; i < slots.length; i += 1) slots[i] = Math.max(slots[i], slots[i - 1] + 1)
+  for (let i = k - 1; i >= 0; i -= 1) slots[i] = Math.min(slots[i], slots[i + 1] - 1)
+  if (slots[0] < 0 || slots[slots.length - 1] >= placed.length) return null
+  return filled.map((index, i) => ({ pocket: placed[index], slot: slots[i] }))
+}
+
+// Shows a hand-arranged section at once and has the backend keep it from now on.
+export async function saveArrangement(inventoryId, kind, moves) {
+  moves.forEach(({ pocket, slot }) => { pocket.slot = slot })
+  const placements = moves.map(({ pocket, slot }) => ({
+    slot,
+    itemId: String(pocket.contents.itemId ?? pocket.contents.item_id),
+    quantity: String(pocket.contents.quantity ?? ''),
+  }))
+  const res = await fetch('/api/inventory-slots', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inventoryId: String(inventoryId), [kind === 'cargo' ? 'cargo' : 'items']: placements }),
+  })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+}

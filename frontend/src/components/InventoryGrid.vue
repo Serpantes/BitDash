@@ -1,5 +1,9 @@
 <template>
-  <div class="inventory-grid" :style="{ '--inventory-cols': columns }">
+  <div
+    class="inventory-grid"
+    :class="{ 'inventory-grid--arranging': arrangeable }"
+    :style="{ '--inventory-cols': columns }"
+  >
     <div
       v-for="section in shownSections"
       :key="section.kind"
@@ -10,7 +14,16 @@
         v-for="(pocket, i) in section.pockets"
         :key="i"
         class="inventory-slot"
-        :class="{ 'inventory-slot--empty': !pocket }"
+        :class="{
+          'inventory-slot--empty': !pocket,
+          'inventory-slot--dragged': drag.kind === section.kind && drag.from === i,
+          'inventory-slot--target': drag.kind === section.kind && drag.over === i,
+        }"
+        :draggable="arrangeable && Boolean(pocket)"
+        @dragstart="onDragStart(section.kind, i, $event)"
+        @dragover="onDragOver(section, i, $event)"
+        @drop.prevent="onDrop(section, i)"
+        @dragend="endDrag"
       >
         <template v-if="pocket">
           <ItemCard
@@ -31,10 +44,10 @@
 </template>
 
 <script>
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { formatNumber } from '../i18n'
 import { useItemCache } from '../composables/useItemCache'
-import { compactQuantity, inventoryColumns } from '../inventoryLayout'
+import { compactQuantity, inventoryColumns, moveInSection } from '../inventoryLayout'
 import ItemCard from './ItemCard.vue'
 
 // The pockets of one storage on a fixed grid: item pockets, then cargo pockets below them.
@@ -46,15 +59,51 @@ export default {
     sections: { type: Object, required: true },
     maxCols: { type: Number, default: 10 },
     maxHeight: { type: Number, default: Infinity },
+    // Stacks can be dragged to other pockets; emits "arrange" with { kind, moves }.
+    arrangeable: { type: Boolean, default: false },
   },
-  setup(props) {
+  emits: ['arrange'],
+  setup(props, { emit }) {
     const { resolveItem } = useItemCache()
     const columns = computed(() => inventoryColumns(props.sections, props.maxCols, props.maxHeight))
     const shownSections = computed(() => [
       { kind: 'item', pockets: props.sections.items },
       { kind: 'cargo', pockets: props.sections.cargo },
     ].filter((section) => section.pockets.length))
-    return { columns, shownSections, resolveItem, formatNumber, compactQuantity }
+    const drag = reactive({ kind: null, from: -1, over: -1 })
+
+    function onDragStart(kind, index, event) {
+      if (!props.arrangeable) return
+      drag.kind = kind
+      drag.from = index
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/plain', `${kind}:${index}`)
+    }
+    function movesFor(section, index) {
+      if (drag.kind !== section.kind) return null
+      return moveInSection(section.pockets, drag.from, index)
+    }
+    function onDragOver(section, index, event) {
+      if (!movesFor(section, index)) {
+        if (drag.kind === section.kind) drag.over = -1
+        return
+      }
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      drag.over = index
+    }
+    function onDrop(section, index) {
+      const moves = movesFor(section, index)
+      endDrag()
+      if (moves) emit('arrange', { kind: section.kind, moves })
+    }
+    function endDrag() {
+      drag.kind = null
+      drag.from = -1
+      drag.over = -1
+    }
+
+    return { columns, shownSections, resolveItem, formatNumber, compactQuantity, drag, onDragStart, onDragOver, onDrop, endDrag }
   },
 }
 </script>
@@ -111,6 +160,11 @@ export default {
   font-size: 7px;
   line-height: 1.15;
 }
+.inventory-grid--arranging .inventory-slot:not(.inventory-slot--empty) { cursor: grab; }
+.inventory-grid--arranging .inventory-slot :deep(img) { pointer-events: none; }
+.inventory-grid--arranging .inventory-slot--empty { border-color: var(--frame); }
+.inventory-slot--dragged { opacity: 0.35; }
+.inventory-slot--target { outline: 2px solid var(--cream); outline-offset: 1px; }
 .slot-qty {
   position: absolute;
   right: 2px;

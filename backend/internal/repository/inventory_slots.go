@@ -3,7 +3,9 @@ package repository
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +16,13 @@ import (
 // the middle would shift every later one left. Each new listing is matched against the previous
 // one: stacks that are still there keep their pocket, an emptied pocket stays a gap, and a new
 // stack lands in the first free pocket between its neighbours, as a deposit does in game.
-// A storage seen for the first time is laid out packed from pocket 0.
+// A storage seen for the first time is laid out packed from pocket 0, until the layout is
+// arranged by hand to match the game (SetLayout).
 type InventorySlots struct {
-	mu   sync.Mutex
-	path string
-	inv  map[string]*slotLayout
+	mu      sync.Mutex
+	path    string
+	inv     map[string]*slotLayout
+	savedAt int64
 }
 
 type slotLayout struct {
@@ -86,6 +90,7 @@ func (s *InventorySlots) Annotate(path, query string, body []byte) []byte {
 
 	s.mu.Lock()
 	now := time.Now().Unix()
+	changed := false
 	for _, raw := range storages {
 		storage, _ := raw.(map[string]any)
 		id, _ := storage["entityId"].(string)
@@ -109,13 +114,19 @@ func (s *InventorySlots) Annotate(path, query string, body []byte) []byte {
 		if prev == nil {
 			prev = &slotLayout{}
 		}
-		s.inv[id] = &slotLayout{
+		next := &slotLayout{
 			Items: placePockets(prev.Items, items),
 			Cargo: placePockets(prev.Cargo, cargo),
 			Seen:  now,
 		}
+		changed = changed || !reflect.DeepEqual(prev.Items, next.Items) || !reflect.DeepEqual(prev.Cargo, next.Cargo)
+		s.inv[id] = next
 	}
-	s.saveLocked(now)
+	// Listings are annotated each time they are served; write only what changed, and the
+	// "last seen" times now and then.
+	if changed || now-s.savedAt > 3600 {
+		s.saveLocked(now)
+	}
 	s.mu.Unlock()
 
 	out, err := json.Marshal(root)
@@ -123,6 +134,56 @@ func (s *InventorySlots) Annotate(path, query string, body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+// SlotPlacement is one filled pocket of a hand-arranged layout, in listing order.
+type SlotPlacement struct {
+	Slot     int    `json:"slot"`
+	ItemID   string `json:"itemId"`
+	Quantity string `json:"quantity"`
+}
+
+// SetLayout replaces the remembered item and/or cargo layout of one storage (a nil section is
+// kept). Slots must rise in listing order: BitJita lists pockets in their in-game order.
+func (s *InventorySlots) SetLayout(inventoryID string, items, cargo []SlotPlacement) error {
+	if inventoryID == "" {
+		return errors.New("no inventory id")
+	}
+	toEntries := func(placed []SlotPlacement) ([]slotEntry, error) {
+		out := make([]slotEntry, len(placed))
+		last := -1
+		for i, p := range placed {
+			if p.ItemID == "" || p.Slot <= last {
+				return nil, errors.New("slots must rise in listing order")
+			}
+			out[i] = slotEntry{Slot: p.Slot, ID: p.ItemID, Qty: p.Quantity}
+			last = p.Slot
+		}
+		return out, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	layout := s.inv[inventoryID]
+	if layout == nil {
+		layout = &slotLayout{}
+	}
+	next := *layout
+	var err error
+	if items != nil {
+		if next.Items, err = toEntries(items); err != nil {
+			return err
+		}
+	}
+	if cargo != nil {
+		if next.Cargo, err = toEntries(cargo); err != nil {
+			return err
+		}
+	}
+	now := time.Now().Unix()
+	next.Seen = now
+	s.inv[inventoryID] = &next
+	s.saveLocked(now)
+	return nil
 }
 
 func pocketID(pocket map[string]any) string {
@@ -230,6 +291,7 @@ func (s *InventorySlots) saveLocked(now int64) {
 			delete(s.inv, id)
 		}
 	}
+	s.savedAt = now
 	data, err := json.Marshal(s.inv)
 	if err != nil || s.path == "" {
 		return

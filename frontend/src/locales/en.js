@@ -456,6 +456,8 @@ export default {
     changeSkill: 'Change skill',
     expand: 'Expand',
     unpin: 'Unpin',
+    arrange: 'Arrange pockets as in game: drag the stacks',
+    arrangeDone: 'Done arranging',
     buffs: 'Buffs',
     noActiveBuffs: 'none active',
     refresh: 'Refresh',

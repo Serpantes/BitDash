@@ -246,7 +246,7 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 		}
 	} else if !fresh {
 		if data, ok := b.memoryFor(policy).Get(memKey); ok {
-			return data, http.StatusOK, "HIT", nil
+			return b.annotateSlots(path, query, data), http.StatusOK, "HIT", nil
 		}
 	}
 
@@ -290,8 +290,23 @@ func (b *BitjitaCache) getAPI(path, query string, fresh bool) (body []byte, stat
 		} else {
 			b.liveMemory.Set(memKey, body)
 		}
+		body = b.annotateSlots(path, query, body)
 	}
 	return body, status, "MISS", nil
+}
+
+// annotateSlots adds pocket positions to inventory listings each time one is served, cached or
+// not, so a layout arranged by hand shows at once rather than after the cache expires.
+func (b *BitjitaCache) annotateSlots(path, query string, body []byte) []byte {
+	if b.slots == nil {
+		return body
+	}
+	return b.slots.Annotate(path, query, body)
+}
+
+// InventorySlots gives access to the remembered pocket layouts.
+func (b *BitjitaCache) InventorySlots() *InventorySlots {
+	return b.slots
 }
 
 func (b *BitjitaCache) refreshStale(path, query, memKey, staleKey string) *staleFlight {
@@ -337,9 +352,6 @@ func (b *BitjitaCache) fetchShared(path, query string) ([]byte, int, error) {
 	b.inflightMu.Unlock()
 
 	call.body, call.status, call.err = b.fetchUpstream(path, query)
-	if call.err == nil && call.status >= 200 && call.status < 300 && b.slots != nil {
-		call.body = b.slots.Annotate(path, query, call.body)
-	}
 	b.inflightMu.Lock()
 	delete(b.inflight, key)
 	b.inflightMu.Unlock()

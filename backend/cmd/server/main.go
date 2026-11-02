@@ -98,6 +98,7 @@ func main() {
 	http.HandleFunc("/api/bitjita-stats", delivery.NewBitjitaStatsHandler(bitjitaDataCache))
 	http.HandleFunc("/api/item-names", itemNamesHandler)
 	http.HandleFunc("/api/market-catalog", delivery.NewMarketCatalogHandler(marketCatalog))
+	http.HandleFunc("/api/inventory-slots", delivery.NewInventorySlotsHandler(bitjitaDataCache.InventorySlots()))
 	http.HandleFunc("/api/storage-capacity", delivery.NewStorageCapacityHandler(storageCapacity))
 	http.HandleFunc("/api/dashboard", delivery.NewDashboardHandler(dashboardStore))
 	http.HandleFunc("/api/xp-history/", delivery.NewXPHistoryHandler(xpHistory))

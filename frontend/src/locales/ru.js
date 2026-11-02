@@ -461,6 +461,8 @@ export default {
     changeSkill: 'Сменить навык',
     expand: 'Развернуть',
     unpin: 'Открепить',
+    arrange: 'Расставить стаки как в игре: перетаскивайте их',
+    arrangeDone: 'Закончить расстановку',
     buffs: 'Баффы',
     noActiveBuffs: 'нет активных',
     refresh: 'Обновить',

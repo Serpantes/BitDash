@@ -35,6 +35,7 @@ const ICONS = {
   claim: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4L17 12H5"/>',
   layers: '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>',
   minus: '<path d="M5 12h14"/>',
+  move: '<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   chevron: '<path d="M6 9l6 6 6-6"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
