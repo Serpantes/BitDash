@@ -37,6 +37,8 @@ type BitjitaCache struct {
 	staleFreshWait time.Duration
 
 	stats upstreamStats
+
+	slots *InventorySlots
 }
 
 // upstreamStats counts the requests that actually reach BitJita, per path with ids folded,
@@ -133,6 +135,7 @@ func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*Bitji
 		staleMemory:    cache.New(rankingMemoryTTL),
 		inflight:       map[string]*upstreamCall{},
 		staleFreshWait: 3 * time.Second,
+		slots:          NewInventorySlots(filepath.Join(cacheRoot, "inventory-slots.json")),
 	}, nil
 }
 
@@ -334,6 +337,9 @@ func (b *BitjitaCache) fetchShared(path, query string) ([]byte, int, error) {
 	b.inflightMu.Unlock()
 
 	call.body, call.status, call.err = b.fetchUpstream(path, query)
+	if call.err == nil && call.status >= 200 && call.status < 300 && b.slots != nil {
+		call.body = b.slots.Annotate(path, query, call.body)
+	}
 	b.inflightMu.Lock()
 	delete(b.inflight, key)
 	b.inflightMu.Unlock()

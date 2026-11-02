@@ -48,6 +48,8 @@ export default {
     rarityStr: { type: String, default: null },
     variant: { type: String, default: 'default' },
     badge: { type: Boolean, default: false },
+    // Appended to the hover title, e.g. the stack size.
+    hint: { type: String, default: '' },
   },
   setup(props) {
     const displayName = computed(() => props.name || '?')
@@ -64,7 +66,8 @@ export default {
       if (tierLabel.value) parts.push(tierLabel.value)
       if (props.rarityStr) parts.push(props.rarityStr)
       if (typeKind.value === 'cargo') parts.push('cargo')
-      return parts.join(' · ')
+      const text = parts.join(' · ')
+      return props.hint ? `${text} ${props.hint}` : text
     })
 
     watch(resolvedIconUrl, () => {

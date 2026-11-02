@@ -43,28 +43,7 @@
           </div>
 
           <div v-if="!hasInventoryGrid(inv)" class="empty-inv">{{ t('common.empty') }}</div>
-          <div v-else class="inventory-board">
-            <div class="inventory-grid" :style="inventoryGridStyle(inv)">
-              <div
-                v-for="(slot, i) in displayInventorySlots(inv)"
-                :key="`${slot.kind}-${i}`"
-                class="inventory-slot"
-                :class="[`inventory-slot--${slot.kind}`, { 'inventory-slot--empty': !hasContents(slot.pocket) }]"
-              >
-                <template v-if="hasContents(slot.pocket)">
-                  <ItemCard
-                    variant="mini"
-                    :name="itemMeta(slot.pocket.contents).name"
-                    :icon-asset-name="itemMeta(slot.pocket.contents).iconAssetName"
-                    :item-type="itemMeta(slot.pocket.contents).type"
-                    :tier="itemMeta(slot.pocket.contents).tier"
-                    :rarity-str="itemMeta(slot.pocket.contents).rarityStr"
-                  />
-                  <span class="slot-qty">{{ quantityDisplay(slot.pocket.contents.quantity) }}</span>
-                </template>
-              </div>
-            </div>
-          </div>
+          <InventoryGrid v-else :sections="sectionsFor(inv)" :max-cols="16" />
         </div>
         <div v-if="inventories.length === 0" class="card placeholder">{{ t('inventoryPage.noInventories') }}</div>
       </template>
@@ -73,16 +52,17 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { fetchBitjita } from '../api'
-import { formatNumber, t } from '../i18n'
+import { t } from '../i18n'
+import { ensureStorageCapacities, inventorySections } from '../inventoryLayout'
 import { usePinned } from '../composables/usePinned'
 import { useItemCache } from '../composables/useItemCache'
-import ItemCard from './ItemCard.vue'
+import InventoryGrid from './InventoryGrid.vue'
 
 export default {
   name: 'PlayerInventory',
-  components: { ItemCard },
+  components: { InventoryGrid },
   setup() {
     const query = ref('')
     const searching = ref(false)
@@ -93,7 +73,8 @@ export default {
     const invLoading = ref(false)
     const invError = ref(null)
     const { isPinned, pin, unpin } = usePinned()
-    const { resolveItem, prefetch, seedCatalog } = useItemCache()
+    const { prefetch, seedCatalog } = useItemCache()
+    onMounted(ensureStorageCapacities)
 
     async function searchPlayer() {
       const q = query.value.trim()
@@ -167,71 +148,16 @@ export default {
       inventories.value = []
       query.value = ''
     }
-    function inventorySlots(inv) { return inv.pockets ?? [] }
-    function hasContents(pocket) {
-      const c = pocket?.contents
-      return Boolean(c && (c.itemId != null || c.item_id != null))
+    function sectionsFor(inv) { return inventorySections(inv.pockets, inv) }
+    function hasInventoryGrid(inv) {
+      const sections = sectionsFor(inv)
+      return sections.items.length > 0 || sections.cargo.length > 0
     }
-    function isCargoPocket(pocket) {
-      const c = pocket?.contents
-      return c?.itemType === 1 || c?.item_type === 'cargo'
-    }
-    function itemSlots(inv) { return inventorySlots(inv).filter((p) => hasContents(p) && !isCargoPocket(p)) }
-    function cargoSlots(inv) { return inventorySlots(inv).filter((p) => hasContents(p) && isCargoPocket(p)) }
-    function fillSlots(slots, capacity) {
-      if (!capacity) return slots
-      if (capacity <= slots.length) return slots.slice(0, capacity)
-      return [...slots, ...Array.from({ length: capacity - slots.length }, () => ({ contents: null }))]
-    }
-    function itemCapacity(inv) {
-      const name = inv?.inventoryName ?? ''
-      const capacity = Number(inv?.cargoIndex)
-      if (Number.isFinite(capacity) && capacity > 0) return capacity
-      if (/town bank|ancient bank/i.test(name)) return 64
-      if (/lost items chest/i.test(name)) return 32
-      return 0
-    }
-    function cargoCapacity(inv) {
-      const name = inv?.inventoryName ?? ''
-      if (/town bank|ancient bank|lost items chest/i.test(name)) return 16
-      if (/personal cache \(iii\)/i.test(name)) return 24
-      if (/personal cache \(ii\)/i.test(name)) return 18
-      if (/personal cache(?: \(i\))?$/i.test(name)) return 10
-      return 0
-    }
-    function displayItemSlots(inv) { return fillSlots(itemSlots(inv), itemCapacity(inv)) }
-    function displayCargoSlots(inv) { return fillSlots(cargoSlots(inv), cargoCapacity(inv)) }
-    function displayInventorySlots(inv) {
-      return [
-        ...displayItemSlots(inv).map((pocket) => ({ kind: 'item', pocket })),
-        ...displayCargoSlots(inv).map((pocket) => ({ kind: 'cargo', pocket })),
-      ]
-    }
-    function optimalGridColumns(slots) {
-      const units = slots.reduce((sum, slot) => sum + (slot.kind === 'cargo' ? 2 : 1), 0)
-      if (units <= 0) return 1
-      const minCols = 4
-      const maxCols = 16
-      const desiredCols = Math.max(minCols, Math.min(maxCols, Math.round(Math.sqrt(units) * 1.8)))
-      const divisors = []
-      for (let cols = minCols; cols <= maxCols; cols += 1) if (units % cols === 0) divisors.push(cols)
-      if (!divisors.length) return desiredCols
-      return divisors.reduce((best, cols) => {
-        const bestDiff = Math.abs(best - desiredCols)
-        const diff = Math.abs(cols - desiredCols)
-        return diff < bestDiff || (diff === bestDiff && cols > best) ? cols : best
-      }, divisors[0])
-    }
-    function inventoryGridStyle(inv) { return { '--inventory-cols': optimalGridColumns(displayInventorySlots(inv)) } }
-    function hasInventoryGrid(inv) { return itemCapacity(inv) > 0 || cargoCapacity(inv) > 0 || inventorySlots(inv).length > 0 }
-    function itemMeta(contents) { return resolveItem(contents) }
-    function quantityDisplay(quantity) { return formatNumber(quantity ?? 0) }
     function togglePin(inv) { isPinned(inv.entityId) ? unpin(inv.entityId) : pin(selectedPlayer.value, inv) }
 
     return {
       query, searching, searchError, results, selectedPlayer, inventories, invLoading, invError,
-      searchPlayer, selectPlayer, reset, displayInventorySlots, inventoryGridStyle, hasInventoryGrid,
-      hasContents, itemMeta, quantityDisplay, isPinned, togglePin,
+      searchPlayer, selectPlayer, reset, sectionsFor, hasInventoryGrid, isPinned, togglePin,
     }
   },
 }
@@ -257,7 +183,7 @@ export default {
 .player-online.offline { background: var(--surface-raised); color: var(--muted); }
 .reset-btn, .pin-btn { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--text-soft); cursor: pointer; }
 .reset-btn { padding: 5px 12px; }
-.inv-card { width: max-content; max-width: none; padding: 14px 18px; }
+.inv-card { width: max-content; max-width: 100%; padding: 12px 14px; }
 .inv-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .inv-house, .inv-region, .inv-claim { font-size: 11px; padding: 1px 7px; border-radius: 8px; font-weight: 500; }
 .inv-house { background: rgba(192, 132, 252, 0.18); color: #d8b4fe; }
@@ -265,12 +191,5 @@ export default {
 .inv-claim { background: rgba(117, 224, 167, 0.16); color: var(--success); }
 .pin-btn { margin-left: auto; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
 .pin-btn.pinned { background: rgba(138, 164, 255, 0.18); border-color: var(--accent); color: var(--accent); font-weight: 600; }
-.inventory-board { padding: 8px; background: #252437; border: 2px solid #35344a; border-radius: 10px; }
-.inventory-grid { display: grid; grid-template-columns: repeat(var(--inventory-cols), 58px); gap: 6px; justify-content: start; width: max-content; }
-.inventory-slot { position: relative; height: 70px; display: flex; align-items: center; justify-content: center; border-radius: 9px; background: linear-gradient(145deg, #4a4960, #2c2b3e); box-shadow: inset 0 0 0 2px #6a687e, inset 0 0 0 4px #2f2e43, 0 1px 2px rgba(0,0,0,.35); }
-.inventory-slot--item { width: 58px; }
-.inventory-slot--cargo { width: auto; grid-column: span 2; }
-.inventory-slot--empty { background: rgba(37, 36, 55, 0.35); border: 3px solid #6a687e; opacity: 1; box-shadow: inset 0 0 0 2px #2f2e43, 0 1px 2px rgba(0,0,0,.35); }
-.slot-qty { position: absolute; right: 5px; bottom: 5px; color: #f8fafc; font-size: 13px; font-weight: 800; text-shadow: -1px -1px 0 rgba(0,0,0,.8), 1px -1px 0 rgba(0,0,0,.8), -1px 1px 0 rgba(0,0,0,.8), 1px 1px 0 rgba(0,0,0,.8); pointer-events: none; }
 .error-msg { color: var(--danger); }
 </style>

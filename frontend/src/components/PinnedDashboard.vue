@@ -214,27 +214,13 @@
 
           <template v-else>
             <div v-if="!hasInventoryGrid(item.inventoryId)" class="bc-muted-note">{{ t('common.empty') }}</div>
-            <div v-else class="inventory-grid" :style="inventoryGridStyle(item.inventoryId)">
-              <div
-                v-for="(slot, i) in displayInventorySlots(item.inventoryId)"
-                :key="`${slot.kind}-${i}`"
-                class="inventory-slot"
-                :class="[`inventory-slot--${slot.kind}`, { 'inventory-slot--empty': !hasContents(slot.pocket) }]"
-              >
-                <template v-if="hasContents(slot.pocket)">
-                  <ItemCard
-                    variant="mini"
-                    badge
-                    :name="itemMeta(slot.pocket.contents).name"
-                    :icon-asset-name="itemMeta(slot.pocket.contents).iconAssetName"
-                    :item-type="itemMeta(slot.pocket.contents).type"
-                    :tier="itemMeta(slot.pocket.contents).tier"
-                    :rarity-str="itemMeta(slot.pocket.contents).rarityStr"
-                  />
-                  <span class="slot-qty">{{ quantityDisplay(slot.pocket.contents.quantity) }}</span>
-                </template>
-              </div>
-            </div>
+            <InventoryGrid
+              v-else
+              class="dash-inventory"
+              :sections="inventorySectionsFor(item.inventoryId)"
+              :max-cols="inventoryMaxCols(item.inventoryId)"
+              :max-height="INVENTORY_BODY_HEIGHT_PX"
+            />
           </template>
         </div>
       </section>
@@ -505,8 +491,10 @@ import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpH
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
 import { formatNumber, intlLocale, t } from '../i18n'
+import { columnsForWidth, ensureStorageCapacities, hasContents, inventoryColumns, inventorySections, sectionsHeight } from '../inventoryLayout'
 import AppIcon from './AppIcon.vue'
 import ItemCard from './ItemCard.vue'
+import InventoryGrid from './InventoryGrid.vue'
 import SkillProgressCard from './SkillProgressCard.vue'
 import MapTile from './MapTile.vue'
 import MarketBlock from './MarketBlock.vue'
@@ -515,6 +503,10 @@ import PlannerBlock from './PlannerBlock.vue'
 const SEARCH_DEBOUNCE_MS = 500
 const TILE_WIDTH_PX = 380
 const TILE_GAP_PX = 14
+// Room for pockets inside an inventory tile: the tile minus its frame, heading and padding.
+const INVENTORY_BODY_HEIGHT_PX = 366
+const INVENTORY_SMALL_COLS = columnsForWidth(TILE_WIDTH_PX - 30)
+const INVENTORY_LARGE_COLS = columnsForWidth(TILE_WIDTH_PX * 2 + TILE_GAP_PX - 30)
 const WIZARD_PREVIEW_MAX = 24
 const MARKET_TRADES_LIMIT = 100
 const MARKET_BOOK_CONCURRENCY = 4
@@ -534,7 +526,7 @@ const BLOCK_TYPES = [
 
 export default {
   name: 'PinnedDashboard',
-  components: { AppIcon, ItemCard, MapTile, MarketBlock, PlannerBlock, SkillProgressCard },
+  components: { AppIcon, InventoryGrid, ItemCard, MapTile, MarketBlock, PlannerBlock, SkillProgressCard },
   directives: {
     focus: { mounted: (el) => el.focus() },
   },
@@ -1409,87 +1401,17 @@ export default {
     }
 
     function inventorySlots(inventoryId) { return state[inventoryId]?.pockets ?? [] }
-    function inventoryMeta(inventoryId) { return state[inventoryId]?.inventory ?? null }
-    function hasContents(pocket) {
-      const contents = pocket?.contents
-      return Boolean(contents && (contents.itemId != null || contents.item_id != null))
+    function inventorySectionsFor(inventoryId) {
+      const meta = state[inventoryId]?.inventory ?? pinned.value.find((p) => p.inventoryId === inventoryId)
+      return inventorySections(inventorySlots(inventoryId), meta)
     }
-    function isCargoPocket(pocket) {
-      const contents = pocket?.contents
-      return contents?.itemType === 1 || contents?.item_type === 'cargo'
+    function inventoryFitsSmallTile(inventoryId) {
+      const sections = inventorySectionsFor(inventoryId)
+      const cols = inventoryColumns(sections, INVENTORY_SMALL_COLS, INVENTORY_BODY_HEIGHT_PX)
+      return sectionsHeight(sections, cols) <= INVENTORY_BODY_HEIGHT_PX
     }
-    function itemSlots(inventoryId) { return inventorySlots(inventoryId).filter((p) => hasContents(p) && !isCargoPocket(p)) }
-    function cargoSlots(inventoryId) { return inventorySlots(inventoryId).filter((p) => hasContents(p) && isCargoPocket(p)) }
-    function fillSlots(slots, capacity) {
-      if (!capacity) return slots
-      const visibleSlots = slots.slice(0, capacity)
-      if (capacity <= visibleSlots.length) return visibleSlots
-      return [...visibleSlots, ...Array.from({ length: capacity - visibleSlots.length }, () => ({ contents: null }))]
-    }
-    function itemCapacity(inventoryId) {
-      const meta = inventoryMeta(inventoryId)
-      const name = `${meta?.inventoryName ?? ''} ${meta?.buildingName ?? ''}`
-      const capacity = Number(meta?.cargoIndex)
-      if (Number.isFinite(capacity) && capacity > 0) return capacity
-      return buildingItemCapacity(name)
-    }
-    function cargoCapacity(inventoryId) {
-      const meta = inventoryMeta(inventoryId)
-      const name = `${meta?.inventoryName ?? ''} ${meta?.buildingName ?? ''}`
-      if (/personal cache \(iii\)/i.test(name)) return 24
-      if (/personal cache \(ii\)/i.test(name)) return 18
-      if (/personal cache(?: \(i\))?$/i.test(name)) return 10
-      return buildingCargoCapacity(name)
-    }
-    function tierIndex(name) {
-      const tiers = ['rough', 'simple', 'sturdy', 'fine', 'exquisite', 'peerless', 'ornate', 'pristine', 'magnificent', 'flawless']
-      const lower = name.toLowerCase()
-      return tiers.findIndex((tier) => lower.includes(tier))
-    }
-    function tierValue(name, values) {
-      const index = tierIndex(name)
-      return index >= 0 ? values[index] : 0
-    }
-    function buildingItemCapacity(name) {
-      if (/ancient bank|town bank/i.test(name)) return 64
-      if (/lost items chest/i.test(name)) return 32
-      if (/gothic item storage/i.test(name)) return 72
-      if (/skillful leathercraft item storage/i.test(name)) return 60
-      if (/cozy cottage item storage/i.test(name)) return 48
-      if (/talented woodcraft item storage/i.test(name)) return 36
-      if (/logcraft item storage/i.test(name)) return 30
-      if (/wicker item storage/i.test(name)) return 24
-      if (/item recovery pickup/i.test(name)) return 14
-      if (/large (stone )?chest/i.test(name)) return tierValue(name, [18, 24, 30, 36, 42, 48, 54, 60, 66, 72])
-      if (/(stone )?chest/i.test(name)) return tierValue(name, [9, 12, 15, 18, 21, 24, 27, 30, 33, 36])
-      if (/barter (counter|stall)/i.test(name)) return tierValue(name, [20, 0, 40, 0, 60, 0, 0, 0, 0, 0])
-      return 0
-    }
-    function buildingCargoCapacity(name) {
-      if (/ancient bank|town bank|lost items chest/i.test(name)) return 16
-      if (/gothic cargo bin/i.test(name)) return 60
-      if (/skillful leathercraft cargo bin/i.test(name)) return 48
-      if (/cozy cottage cargo bin/i.test(name)) return 36
-      if (/talented woodcraft cargo bin/i.test(name)) return 24
-      if (/logcraft cargo bin/i.test(name)) return 18
-      if (/wicker cargo bin/i.test(name)) return 12
-      if (/wicker basket/i.test(name)) return 6
-      if (/small stockpile|supplies stockpile/i.test(name)) return 4
-      if (/carpentry stockpile/i.test(name)) return tierValue(name, [2, 4, 6, 8, 10, 12, 0, 0, 0, 0])
-      if (/fishing stockpile/i.test(name)) return tierValue(name, [1, 2, 3, 4, 5, 6, 0, 0, 0, 0])
-      if (/hunting stockpile/i.test(name)) return tierValue(name, [1, 2, 6, 9, 10, 11, 0, 0, 0, 0])
-      if (/quarry stockpile/i.test(name)) return tierValue(name, [3, 5, 8, 11, 13, 16, 0, 0, 0, 0])
-      if (/stockpile/i.test(name)) return tierValue(name, [6, 12, 18, 24, 30, 36, 42, 48, 54, 60])
-      if (/barter (counter|stall)/i.test(name)) return tierValue(name, [6, 0, 12, 0, 18, 0, 0, 0, 0, 0])
-      return 0
-    }
-    function displayItemSlots(inventoryId) { return fillSlots(itemSlots(inventoryId), itemCapacity(inventoryId)) }
-    function displayCargoSlots(inventoryId) { return fillSlots(cargoSlots(inventoryId), cargoCapacity(inventoryId)) }
-    function displayInventorySlots(inventoryId) {
-      return [
-        ...displayItemSlots(inventoryId).map((pocket) => ({ kind: 'item', pocket })),
-        ...displayCargoSlots(inventoryId).map((pocket) => ({ kind: 'cargo', pocket })),
-      ]
+    function inventoryMaxCols(inventoryId) {
+      return dashboardCardSpan(inventoryId) === 2 ? INVENTORY_LARGE_COLS : INVENTORY_SMALL_COLS
     }
     function dashboardCardSpan(inventoryId) {
       const pinItem = pinned.value.find((p) => p.inventoryId === inventoryId)
@@ -1498,11 +1420,7 @@ export default {
       if (isSkillBlock(pinItem)) return skillTileSize(inventoryId) === 'large' ? 2 : 1
       if (isPlannerBlock(pinItem)) return plannerTileSize(inventoryId) === 'large' ? 2 : 1
       if (isMarketBlock(pinItem)) return marketTileSize(inventoryId) === 'small' ? 1 : 2
-      const itemCount = displayItemSlots(inventoryId).length
-      const cargoCount = displayCargoSlots(inventoryId).length
-      if (cargoCount > 0) return 2
-      if (itemCount > 64) return 2
-      return 1
+      return inventoryFitsSmallTile(inventoryId) ? 1 : 2
     }
     function dashboardCardStyle(inventoryId) {
       const pos = layoutInfo.value.positions[inventoryId]
@@ -1515,26 +1433,9 @@ export default {
         'inv-card--dragging': drag.id === inventoryId,
       }
     }
-    function optimalGridColumns(slots, maxCols = 16) {
-      const units = slots.reduce((sum, slot) => sum + (slot.kind === 'cargo' ? 2 : 1), 0)
-      if (units <= 0) return 1
-      const minCols = 4
-      const desiredCols = Math.max(minCols, Math.min(maxCols, Math.round(Math.sqrt(units) * 1.8)))
-      const divisors = []
-      for (let cols = minCols; cols <= maxCols; cols += 1) if (units % cols === 0) divisors.push(cols)
-      if (divisors.length === 0) return desiredCols
-      return divisors.reduce((best, cols) => {
-        const bestDiff = Math.abs(best - desiredCols)
-        const diff = Math.abs(cols - desiredCols)
-        return diff < bestDiff || (diff === bestDiff && cols > best) ? cols : best
-      }, divisors[0])
-    }
-    function inventoryGridStyle(inventoryId) {
-      const maxCols = dashboardCardSpan(inventoryId) === 2 ? 16 : 8
-      return { '--inventory-cols': optimalGridColumns(displayInventorySlots(inventoryId), maxCols) }
-    }
     function hasInventoryGrid(inventoryId) {
-      return itemCapacity(inventoryId) > 0 || cargoCapacity(inventoryId) > 0 || inventorySlots(inventoryId).length > 0
+      const sections = inventorySectionsFor(inventoryId)
+      return sections.items.length > 0 || sections.cargo.length > 0
     }
     function blockIsEmpty(item) {
       if (isMapBlock(item)) return false
@@ -1560,7 +1461,6 @@ export default {
       if (!itemRef?.id) return { name: '?', type: 0 }
       return resolveItem({ itemId: itemRef.id, itemType: itemRef.itemType })
     }
-    function quantityDisplay(quantity) { return formatNumber(quantity ?? 0) }
     function stripOwner(name, owner) {
       if (!name || !owner) return name
       const prefix = `${owner}'s `
@@ -2225,6 +2125,7 @@ export default {
       if (event.key === 'Escape' && wizard.open) closeAddWizard()
     }
     onMounted(() => {
+      ensureStorageCapacities()
       window.addEventListener('keydown', onKeydown)
       document.addEventListener('visibilitychange', onVisibilityChange)
       updateDashboardCols()
@@ -2250,8 +2151,8 @@ export default {
       FLAG_PCT, formatNumber, BLOCK_TYPES, WIZARD_PREVIEW_MAX,
       pinned, isPinned, unpin, state, drag, dropCells, gridArea, onTilePointerDown, layoutInfo, rootRef, wizard, wizardTitle, wizardKicker, wizardSearchesPlayers,
       gridRef, wizardSearchInput, dashboardCols, dashboardUpdatedLabel, dashboardRefreshing,
-      displayInventorySlots, dashboardCardClass, dashboardCardStyle,
-      inventoryGridStyle, hasInventoryGrid, hasContents, itemMeta, quantityDisplay,
+      dashboardCardClass, dashboardCardStyle,
+      inventorySectionsFor, inventoryMaxCols, INVENTORY_BODY_HEIGHT_PX, hasInventoryGrid, itemMeta,
       blockType, blockHeading, blockCanResize, blockIsLarge, toggleBlockSize, vitalsRows,
       isCharacterBlock, isMarketBlock, isPlannerBlock, isMapBlock,
       mapTileSize, setMapTileSize, marketTileSize, setMarketTileSize,
@@ -2282,9 +2183,6 @@ export default {
 .pinned-dashboard {
   --dashboard-cell: min(380px, calc(100vw - 32px));
   --dashboard-row: 446px;
-  --dash-slot: 38px;
-  --dash-slot-height: 46px;
-  --dash-gap: 4px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2365,49 +2263,7 @@ export default {
 .dash-card-body--map { padding: 6px 8px 8px; }
 .dash-card-body--skill { padding-top: 6px; }
 
-.inventory-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--inventory-cols), var(--dash-slot));
-  gap: var(--dash-gap);
-  justify-content: center;
-  align-content: start;
-  min-height: 0;
-  overflow: hidden;
-}
-.inventory-slot {
-  position: relative;
-  height: var(--dash-slot-height);
-  display: flex;
-  align-items: stretch;
-  justify-content: stretch;
-  border-radius: 6px;
-}
-.inventory-slot--item { width: var(--dash-slot); }
-.inventory-slot--cargo { grid-column: span 2; }
-.inventory-slot--empty {
-  border: 2px solid var(--slot-edge);
-  background: var(--slot);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 6px 10px rgba(0, 0, 0, 0.18);
-}
-.inventory-slot :deep(.item-card--mini) { width: 100%; }
-.inventory-slot :deep(.item-card--mini .item-card__icon),
-.inventory-slot--cargo :deep(.item-card--mini .item-card__icon) {
-  width: 100%;
-  height: 100%;
-  flex-basis: 100%;
-}
-.slot-qty {
-  position: absolute;
-  right: 4px;
-  bottom: 3px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
-  pointer-events: none;
-}
+.dash-inventory { flex: 1; overflow-y: auto; }
 
 .vitals { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .vital { display: flex; flex-direction: column; gap: 5px; }

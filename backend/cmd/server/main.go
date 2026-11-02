@@ -87,6 +87,7 @@ func main() {
 	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 30*time.Minute)
 	smithingOre := repository.NewSmithingOre(bitjitaDataCache, 5*time.Minute, 10*time.Minute)
 	go smithingOre.Run()
+	storageCapacity := repository.NewStorageCapacity(bitjitaDataCache, 24*time.Hour)
 
 	http.HandleFunc("/api/data", handler)
 	http.HandleFunc("/api/health", delivery.NewHealthHandler())
@@ -97,6 +98,7 @@ func main() {
 	http.HandleFunc("/api/bitjita-stats", delivery.NewBitjitaStatsHandler(bitjitaDataCache))
 	http.HandleFunc("/api/item-names", itemNamesHandler)
 	http.HandleFunc("/api/market-catalog", delivery.NewMarketCatalogHandler(marketCatalog))
+	http.HandleFunc("/api/storage-capacity", delivery.NewStorageCapacityHandler(storageCapacity))
 	http.HandleFunc("/api/dashboard", delivery.NewDashboardHandler(dashboardStore))
 	http.HandleFunc("/api/xp-history/", delivery.NewXPHistoryHandler(xpHistory))
 	http.HandleFunc("/api/smithing-ore/", delivery.NewSmithingOreHandler(smithingOre))
