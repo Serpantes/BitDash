@@ -390,4 +390,13 @@ export default {
 }
 .skill-chart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .skill-chart-sub { font-size: 11px; color: var(--muted); }
+
+/* A large card squeezed into one narrow column (phones): chart under the
+   summary, the card scrolls inside its tile. */
+@container dash-card (max-width: 600px) {
+  .skill-card--large { flex-direction: column; overflow-y: auto; }
+  .skill-card--large .skill-summary { min-width: 0; }
+  .skill-card--large .skill-chart { flex: 0 0 auto; min-height: 360px; }
+  .skill-card--large .skill-chart-head { flex-wrap: wrap; }
+}
 </style>

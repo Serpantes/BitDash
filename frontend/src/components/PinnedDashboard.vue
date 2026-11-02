@@ -2247,9 +2247,16 @@ export default {
   height: 100%;
   overflow: hidden;
   transition: opacity 0.15s;
+  /* Blocks lay themselves out by their own width (see SkillProgressCard). */
+  container: dash-card / inline-size;
 }
 .inv-card--dragging { opacity: 0.3; }
 .dash-card-head { cursor: grab; user-select: none; touch-action: none; }
+/* On touch screens a swipe over a block's head scrolls the page; tiles are
+   rearranged by dragging with a mouse. */
+@media (pointer: coarse) {
+  .dash-card-head { touch-action: pan-y; }
+}
 .tile-ghost {
   opacity: 0.94;
   transform-origin: 50% 20%;

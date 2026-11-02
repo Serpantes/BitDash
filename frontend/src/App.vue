@@ -127,4 +127,15 @@ export default {
 .app-footer p { margin: 4px 0; }
 .app-footer a { color: var(--muted-strong); }
 .app-footer a:hover { color: var(--text); }
+
+/* Phones: two compact header rows instead of three. */
+@media (max-width: 600px) {
+  .app { padding: 0 12px 20px; }
+  .app-header { gap: 8px 10px; margin: 0 -12px 12px; padding: 8px 12px; }
+  .app-logo { font-size: 16px; letter-spacing: 0.14em; }
+  .app-tabs { margin-left: auto; gap: 4px; }
+  .app-tab { padding: 6px 10px; letter-spacing: 0.1em; }
+  .app-actions { margin-left: 0; }
+  .app-status { margin-left: auto; }
+}
 </style>
