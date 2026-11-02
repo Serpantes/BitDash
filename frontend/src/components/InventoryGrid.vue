@@ -2,7 +2,7 @@
   <div
     class="inventory-grid"
     :class="{ 'inventory-grid--arranging': arrangeable, 'inventory-grid--side': sideBySide }"
-    :style="{ '--inventory-cols': columns }"
+    :style="{ '--inventory-cols': columns, '--inventory-half-cols': columns * 2 }"
   >
     <div
       v-for="section in shownSections"
@@ -19,6 +19,7 @@
           'inventory-slot--dragged': drag.kind === section.kind && drag.from === i,
           'inventory-slot--target': drag.kind === section.kind && drag.over === i,
         }"
+        :style="rowStart(section, i)"
         :draggable="arrangeable && Boolean(pocket)"
         @dragstart="onDragStart(section.kind, i, $event)"
         @dragover="onDragOver(section, i, $event)"
@@ -73,6 +74,17 @@ export default {
     ].filter((section) => section.pockets.length))
     const drag = reactive({ kind: null, from: -1, over: -1 })
 
+    // The grid runs on half-pocket columns so a short last row can sit in the middle, as in
+    // game: an item pocket spans two of them, a cargo pocket four.
+    function rowStart(section, index) {
+      const span = section.kind === 'cargo' ? 4 : 2
+      const perRow = Math.max(1, Math.floor((columns.value * 2) / span))
+      const count = section.pockets.length
+      const last = count % perRow
+      if (!last || index !== count - last) return null
+      return { gridColumnStart: ((perRow - last) * span) / 2 + 1 }
+    }
+
     function onDragStart(kind, index, event) {
       if (!props.arrangeable) return
       drag.kind = kind
@@ -104,7 +116,7 @@ export default {
       drag.over = -1
     }
 
-    return { columns, shownSections, resolveItem, formatNumber, compactQuantity, drag, onDragStart, onDragOver, onDrop, endDrag }
+    return { columns, shownSections, rowStart, resolveItem, formatNumber, compactQuantity, drag, onDragStart, onDragOver, onDrop, endDrag }
   },
 }
 </script>
@@ -119,8 +131,8 @@ export default {
 }
 .inventory-section {
   display: grid;
-  grid-template-columns: repeat(var(--inventory-cols), minmax(0, var(--slot-size)));
-  gap: 3px;
+  grid-template-columns: repeat(var(--inventory-half-cols), minmax(0, calc((var(--slot-size) + 3px) / 2)));
+  row-gap: 3px;
   justify-content: center;
   width: 100%;
 }
@@ -138,6 +150,8 @@ export default {
 }
 .inventory-slot {
   position: relative;
+  grid-column-end: span 2;
+  margin: 0 1.5px;
   aspect-ratio: 1;
   display: flex;
   border-radius: 4px;
@@ -148,7 +162,7 @@ export default {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3), inset 0 4px 6px rgba(0, 0, 0, 0.18);
 }
 .inventory-section--cargo .inventory-slot {
-  grid-column: span 2;
+  grid-column-end: span 4;
   aspect-ratio: 67 / 32;
 }
 .inventory-section--cargo .inventory-slot--empty { border-style: dashed; }
