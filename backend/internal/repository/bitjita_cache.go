@@ -38,7 +38,15 @@ type BitjitaCache struct {
 
 	stats upstreamStats
 
-	slots *InventorySlots
+	slots     *InventorySlots
+	cacheRoot string
+}
+
+// UseRelay takes exact inventory pockets from relay.bitjita.com (see RelayInventories).
+func (b *BitjitaCache) UseRelay(relayURL string) {
+	relay := NewRelayInventories(relayURL, b.cacheRoot)
+	b.slots.UseRelay(relay)
+	relay.Start()
 }
 
 // upstreamStats counts the requests that actually reach BitJita, per path with ids folded,
@@ -136,6 +144,7 @@ func NewBitjitaCache(baseURL, cacheRoot string, liveMemory *cache.Cache) (*Bitji
 		inflight:       map[string]*upstreamCall{},
 		staleFreshWait: 3 * time.Second,
 		slots:          NewInventorySlots(filepath.Join(cacheRoot, "inventory-slots.json")),
+		cacheRoot:      cacheRoot,
 	}, nil
 }
 

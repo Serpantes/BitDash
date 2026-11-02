@@ -63,6 +63,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("bitjita cache: %v", err)
 	}
+	relayURL := os.Getenv("BITJITA_RELAY_URL")
+	if relayURL == "" {
+		relayURL = "https://relay.bitjita.com"
+	}
+	if relayURL != "off" {
+		bitjitaDataCache.UseRelay(relayURL)
+	}
 
 	xpHistory, err := repository.NewXPHistory(xpHistoryDir, "wss://live.bitjita.com", bitjitaDataCache)
 	if err != nil {

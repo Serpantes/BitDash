@@ -1,7 +1,7 @@
 <template>
   <div
     class="inventory-grid"
-    :class="{ 'inventory-grid--arranging': arrangeable }"
+    :class="{ 'inventory-grid--arranging': arrangeable, 'inventory-grid--side': sideBySide }"
     :style="{ '--inventory-cols': columns }"
   >
     <div
@@ -47,7 +47,7 @@
 import { computed, reactive } from 'vue'
 import { formatNumber } from '../i18n'
 import { useItemCache } from '../composables/useItemCache'
-import { compactQuantity, inventoryColumns, moveInSection } from '../inventoryLayout'
+import { compactQuantity, GAME_COLS, inventoryColumns, moveInSection } from '../inventoryLayout'
 import ItemCard from './ItemCard.vue'
 
 // The pockets of one storage on a fixed grid: item pockets, then cargo pockets below them.
@@ -57,15 +57,16 @@ export default {
   props: {
     // From inventorySections(): { items, cargo }, each an array of pockets and nulls.
     sections: { type: Object, required: true },
-    maxCols: { type: Number, default: 10 },
-    maxHeight: { type: Number, default: Infinity },
+    maxCols: { type: Number, default: GAME_COLS },
+    // Item and cargo pockets next to each other rather than one above the other.
+    sideBySide: { type: Boolean, default: false },
     // Stacks can be dragged to other pockets; emits "arrange" with { kind, moves }.
     arrangeable: { type: Boolean, default: false },
   },
   emits: ['arrange'],
   setup(props, { emit }) {
     const { resolveItem } = useItemCache()
-    const columns = computed(() => inventoryColumns(props.sections, props.maxCols, props.maxHeight))
+    const columns = computed(() => inventoryColumns(props.maxCols))
     const shownSections = computed(() => [
       { kind: 'item', pockets: props.sections.items },
       { kind: 'cargo', pockets: props.sections.cargo },
@@ -123,7 +124,14 @@ export default {
   justify-content: center;
   width: 100%;
 }
-.inventory-section + .inventory-section--cargo {
+.inventory-grid--side {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 14px;
+}
+.inventory-grid--side .inventory-section { width: auto; flex: 0 1 calc(var(--inventory-cols) * (var(--slot-size) + 3px)); }
+.inventory-grid:not(.inventory-grid--side) .inventory-section + .inventory-section--cargo {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px solid var(--frame-soft);

@@ -23,6 +23,16 @@ type InventorySlots struct {
 	path    string
 	inv     map[string]*slotLayout
 	savedAt int64
+	// Exact pockets from the game's database replica, when it has them.
+	relay *RelayInventories
+}
+
+// UseRelay takes pockets from the replica for every inventory it holds; the remembered
+// layout then only fills in while the replica has nothing (just started, or unreachable).
+func (s *InventorySlots) UseRelay(relay *RelayInventories) {
+	s.mu.Lock()
+	s.relay = relay
+	s.mu.Unlock()
 }
 
 type slotLayout struct {
@@ -88,16 +98,30 @@ func (s *InventorySlots) Annotate(path, query string, body []byte) []byte {
 		return body
 	}
 
+	rootRegion := numberInt(root["regionId"])
 	s.mu.Lock()
 	now := time.Now().Unix()
 	changed := false
 	for _, raw := range storages {
 		storage, _ := raw.(map[string]any)
 		id, _ := storage["entityId"].(string)
-		pockets, _ := storage[listing.pockets].([]any)
 		if id == "" {
 			continue
 		}
+		if s.relay != nil {
+			region := numberInt(storage["regionId"])
+			if region == 0 {
+				region = rootRegion
+			}
+			s.relay.Watch(id, region)
+			if row, ok := s.relay.Lookup(id); ok {
+				if s.useRelayRow(id, storage, listing, row, now) {
+					changed = true
+				}
+				continue
+			}
+		}
+		pockets, _ := storage[listing.pockets].([]any)
 		var items, cargo []map[string]any
 		for _, p := range pockets {
 			pocket, _ := p.(map[string]any)
@@ -184,6 +208,57 @@ func (s *InventorySlots) SetLayout(inventoryID string, items, cargo []SlotPlacem
 	s.inv[inventoryID] = &next
 	s.saveLocked(now)
 	return nil
+}
+
+func numberInt(v any) int {
+	n, _ := v.(json.Number)
+	i, _ := n.Int64()
+	return int(i)
+}
+
+// useRelayRow puts the replica's pockets into a listed storage, in the listing's own format,
+// with their exact slots and the storage's pocket counts, and remembers that layout.
+func (s *InventorySlots) useRelayRow(id string, storage map[string]any, listing inventoryListing, row RelayInventory, now int64) bool {
+	camel := listing.pockets == "pockets"
+	pockets := []any{}
+	next := &slotLayout{Seen: now}
+	for i, p := range row.Pockets {
+		if p.ItemID == "" {
+			continue
+		}
+		slot := i
+		if i >= row.CargoIndex {
+			slot = i - row.CargoIndex
+		}
+		var contents map[string]any
+		if camel {
+			itemType := json.Number("0")
+			if p.Cargo {
+				itemType = "1"
+			}
+			contents = map[string]any{"itemId": json.Number(p.ItemID), "itemType": itemType, "quantity": json.Number(p.Quantity)}
+		} else {
+			itemType := "item"
+			if p.Cargo {
+				itemType = "cargo"
+			}
+			contents = map[string]any{"item_id": json.Number(p.ItemID), "item_type": itemType, "quantity": json.Number(p.Quantity)}
+		}
+		pockets = append(pockets, map[string]any{"locked": p.Locked, "volume": json.Number(p.Volume), "contents": contents, "slot": slot})
+		entry := slotEntry{Slot: slot, ID: p.ItemID, Qty: p.Quantity}
+		if p.Cargo {
+			next.Cargo = append(next.Cargo, entry)
+		} else {
+			next.Items = append(next.Items, entry)
+		}
+	}
+	storage[listing.pockets] = pockets
+	storage["itemPockets"] = row.CargoIndex
+	storage["cargoPockets"] = len(row.Pockets) - row.CargoIndex
+	storage["livePockets"] = true
+	prev := s.inv[id]
+	s.inv[id] = next
+	return prev == nil || !reflect.DeepEqual(prev.Items, next.Items) || !reflect.DeepEqual(prev.Cargo, next.Cargo)
 }
 
 func pocketID(pocket map[string]any) string {

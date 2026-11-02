@@ -105,7 +105,7 @@
               @click.stop="openEditSkillWizard(item.inventoryId)"
             ><AppIcon name="swap" :size="14" /></button>
             <button
-              v-if="isInventoryBlock(item)"
+              v-if="isInventoryBlock(item) && !state[item.inventoryId]?.inventory?.livePockets"
               type="button"
               class="bc-icon-btn"
               :class="{ 'bc-icon-btn--active': arranging[item.inventoryId] }"
@@ -226,8 +226,7 @@
               v-else
               class="dash-inventory"
               :sections="inventorySectionsFor(item.inventoryId)"
-              :max-cols="inventoryMaxCols(item.inventoryId)"
-              :max-height="INVENTORY_BODY_HEIGHT_PX"
+              :side-by-side="inventorySideBySide(item.inventoryId)"
               :arrangeable="Boolean(arranging[item.inventoryId])"
               @arrange="arrangeInventory(item.inventoryId, $event)"
             />
@@ -501,7 +500,7 @@ import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpH
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
 import { formatNumber, intlLocale, t } from '../i18n'
-import { columnsForWidth, ensureStorageCapacities, hasContents, inventoryColumns, inventorySections, saveArrangement, sectionsHeight } from '../inventoryLayout'
+import { ensureStorageCapacities, hasContents, inventoryColumns, inventorySections, saveArrangement, sectionsHeight } from '../inventoryLayout'
 import AppIcon from './AppIcon.vue'
 import ItemCard from './ItemCard.vue'
 import InventoryGrid from './InventoryGrid.vue'
@@ -515,8 +514,6 @@ const TILE_WIDTH_PX = 380
 const TILE_GAP_PX = 14
 // Room for pockets inside an inventory tile: the tile minus its frame, heading and padding.
 const INVENTORY_BODY_HEIGHT_PX = 366
-const INVENTORY_SMALL_COLS = columnsForWidth(TILE_WIDTH_PX - 30)
-const INVENTORY_LARGE_COLS = columnsForWidth(TILE_WIDTH_PX * 2 + TILE_GAP_PX - 30)
 const WIZARD_PREVIEW_MAX = 24
 const MARKET_TRADES_LIMIT = 100
 const MARKET_BOOK_CONCURRENCY = 4
@@ -1131,6 +1128,10 @@ export default {
         },
       }
     }
+    function livePocketCounts(source) {
+      if (!source?.livePockets) return {}
+      return { itemPockets: source.itemPockets, cargoPockets: source.cargoPockets, livePockets: true }
+    }
     function normalizeClaimBuilding(building, claim) {
       return {
         entityId: building.entityId,
@@ -1140,6 +1141,7 @@ export default {
         claimEntityId: claim.entityId,
         regionId: claim.regionId ?? null,
         pockets: (building.inventory ?? []).map(normalizePocket),
+        ...livePocketCounts(building),
       }
     }
     function mergeInventoriesById(lists) {
@@ -1162,6 +1164,7 @@ export default {
         houseName: detail.buildingName ?? null,
         houseBuildingEntityId: detail.buildingEntityId ?? houseSummary?.buildingEntityId ?? null,
         pockets: (hi.inventory ?? []).map(normalizePocket),
+        ...livePocketCounts(hi),
         _isHousing: true,
       }
     }
@@ -1418,9 +1421,11 @@ export default {
       return inventorySections(inventorySlots(inventoryId), meta)
     }
     function inventoryFitsSmallTile(inventoryId) {
-      const sections = inventorySectionsFor(inventoryId)
-      const cols = inventoryColumns(sections, INVENTORY_SMALL_COLS, INVENTORY_BODY_HEIGHT_PX)
-      return sectionsHeight(sections, cols) <= INVENTORY_BODY_HEIGHT_PX
+      return sectionsHeight(inventorySectionsFor(inventoryId), inventoryColumns()) <= INVENTORY_BODY_HEIGHT_PX
+    }
+    // A wide inventory tile puts its cargo next to the items instead of below them.
+    function inventorySideBySide(inventoryId) {
+      return dashboardCardSpan(inventoryId) === 2
     }
     function isInventoryBlock(item) {
       return !isMapBlock(item) && !isCharacterBlock(item) && !isSkillBlock(item) && !isPlannerBlock(item) && !isMarketBlock(item)
@@ -1429,9 +1434,6 @@ export default {
       saveArrangement(inventoryId, kind, moves).catch((e) => {
         ensureInventoryState(inventoryId).error = e.message
       })
-    }
-    function inventoryMaxCols(inventoryId) {
-      return dashboardCardSpan(inventoryId) === 2 ? INVENTORY_LARGE_COLS : INVENTORY_SMALL_COLS
     }
     function dashboardCardSpan(inventoryId) {
       const pinItem = pinned.value.find((p) => p.inventoryId === inventoryId)
@@ -2172,7 +2174,7 @@ export default {
       pinned, isPinned, unpin, state, drag, dropCells, gridArea, onTilePointerDown, layoutInfo, rootRef, wizard, wizardTitle, wizardKicker, wizardSearchesPlayers,
       gridRef, wizardSearchInput, dashboardCols, dashboardUpdatedLabel, dashboardRefreshing,
       dashboardCardClass, dashboardCardStyle,
-      inventorySectionsFor, inventoryMaxCols, isInventoryBlock, arranging, arrangeInventory, INVENTORY_BODY_HEIGHT_PX, hasInventoryGrid, itemMeta,
+      inventorySectionsFor, inventorySideBySide, isInventoryBlock, arranging, arrangeInventory, hasInventoryGrid, itemMeta,
       blockType, blockHeading, blockCanResize, blockIsLarge, toggleBlockSize, vitalsRows,
       isCharacterBlock, isMarketBlock, isPlannerBlock, isMapBlock,
       mapTileSize, setMapTileSize, marketTileSize, setMarketTileSize,
