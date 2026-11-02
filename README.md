@@ -83,3 +83,9 @@ docker compose exec bitdash cp /var/lib/bitdash/dashboards/<visitor>/dashboard-b
 ```
 
 The visitor ID is the `bitdash_visitor` cookie. Do not run `docker compose down -v` — it deletes the volume with all dashboards.
+
+## License
+
+The BitDash code is under the [MIT License](LICENSE).
+
+BitDash is an unofficial fan project, not affiliated with or endorsed by Clockwork Labs. BitCraft, its names, item icons and game data — including `backend/data/item-names.json` — belong to Clockwork Labs and are not covered by the MIT License. Live game data comes from [BitJita](https://bitjita.com/).
