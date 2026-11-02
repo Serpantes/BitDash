@@ -93,6 +93,11 @@ func (h *XPHistory) Start(ctx context.Context) {
 	go h.every(ctx, xpPollEvery, h.pollAll)
 }
 
+// Flush saves the samples still held in memory; call it on shutdown.
+func (h *XPHistory) Flush() {
+	h.flush()
+}
+
 func (h *XPHistory) every(ctx context.Context, d time.Duration, fn func()) {
 	ticker := time.NewTicker(d)
 	defer ticker.Stop()

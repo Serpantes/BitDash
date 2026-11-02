@@ -21,32 +21,18 @@ type PlayerSource interface {
 	GetPlayerByID(ctx context.Context, request PlayerByIDRequest) (*PlayerByIDResponse, error)
 }
 
-type PlayerResponseStore interface {
-	SavePlayerByIDResponse(ctx context.Context, request PlayerByIDRequest, response *PlayerByIDResponse) error
-}
-
 type PlayerService interface {
 	GetPlayerByID(ctx context.Context, request PlayerByIDRequest) (*PlayerByIDResponse, error)
 }
 
 type playerService struct {
 	source PlayerSource
-	store  PlayerResponseStore
 }
 
-func NewPlayerService(source PlayerSource, store PlayerResponseStore) PlayerService {
-	return &playerService{source: source, store: store}
+func NewPlayerService(source PlayerSource) PlayerService {
+	return &playerService{source: source}
 }
 
 func (s *playerService) GetPlayerByID(ctx context.Context, request PlayerByIDRequest) (*PlayerByIDResponse, error) {
-	response, err := s.source.GetPlayerByID(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	if s.store != nil {
-		if err := s.store.SavePlayerByIDResponse(ctx, request, response); err != nil {
-			return nil, err
-		}
-	}
-	return response, nil
+	return s.source.GetPlayerByID(ctx, request)
 }

@@ -15,9 +15,7 @@ services:
       DASHBOARD_TEMPLATE_FILE: ${DASHBOARD_TEMPLATE_FILE:-}
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-10}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-300}
-      PLAYER_RESPONSE_FILE: /var/lib/bitdash/players.json
       BITJITA_BASE_URL: ${BITJITA_BASE_URL:-https://bitjita.com}
-      EXTERNAL_API_URL: ${EXTERNAL_API_URL:-https://api.example.com/data}
     volumes:
       - bitdash-data:/var/lib/bitdash
     restart: unless-stopped

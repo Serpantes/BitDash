@@ -1,5 +1,7 @@
 # BitDash
 
+[![CI](https://github.com/Serpantes/BitDash/actions/workflows/ci.yml/badge.svg)](https://github.com/Serpantes/BitDash/actions/workflows/ci.yml)
+
 A dashboard for the MMO [BitCraft](https://bitcraftonline.com/): pin player inventories, market items, crafting plans, skill progress and the live map side by side, and keep them on screen while you play. Game data comes from the community API [BitJita](https://bitjita.com/); BitDash caches it so many visitors share a small upstream budget.
 
 Built with AI assistance (Cursor, Claude Code).
@@ -30,6 +32,7 @@ browser (Vue 3)  ──►  Go backend  ──►  bitjita.com  (REST, relay, li
 - **Backend:** Go standard library `net/http` plus `gorilla/websocket`. Layers: `delivery` → `usecase` → `repository`.
 - **Shared upstream budget:** identical BitJita calls are shared and cached in memory and on disk, with a TTL that depends on how fast each kind of data changes. Every client IP gets a token bucket (`RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`); behind Cloudflare the client IP is taken from `CF-Connecting-IP`.
 - **Dashboard sync:** saves carry a revision, so a stale tab cannot overwrite newer blocks — it gets `409` and reloads the saved version instead. localStorage is only a cache.
+- **Graceful shutdown:** on SIGTERM the server stops taking requests, finishes the ones in flight, stops the XP and ore refresh loops and saves XP history still held in memory.
 - **Frontend:** Vue 3 + Vite, no UI framework. Playwright end-to-end tests.
 
 ## Run
@@ -65,6 +68,8 @@ cd frontend && npm install && npm run dev
 cd backend && go test ./...
 cd frontend && npx playwright install chromium && npm run test:e2e
 ```
+
+CI (GitHub Actions) runs gofmt, `go vet`, staticcheck, `go test -race`, the frontend build and the Docker build on every push.
 
 The e2e config starts the Go backend (`:8099`, data in `frontend/.e2e-data`) and a Vite dev server (`:5174`), or reuses ones already running (override with `E2E_BACKEND_PORT` / `E2E_FRONTEND_PORT`). The map tests go through the live bitjita.com map, so they need network access.
 

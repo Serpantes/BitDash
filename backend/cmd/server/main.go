@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"bitdash/backend/internal/cache"
@@ -15,27 +17,23 @@ import (
 )
 
 func main() {
+	// SIGTERM comes from `docker stop`; SIGINT from Ctrl+C.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8090"
 	}
 	addr := ":" + port
-	external := os.Getenv("EXTERNAL_API_URL")
 	bitjitaBaseURL := os.Getenv("BITJITA_BASE_URL")
-	playerResponseFile := os.Getenv("PLAYER_RESPONSE_FILE")
 	itemNameFile := os.Getenv("ITEM_NAME_FILE")
 	bitjitaCacheDir := os.Getenv("BITJITA_CACHE_DIR")
 	xpHistoryDir := os.Getenv("XP_HISTORY_DIR")
 	dashboardDir := os.Getenv("DASHBOARD_DIR")
 	dashboardTemplateFile := os.Getenv("DASHBOARD_TEMPLATE_FILE")
-	if external == "" {
-		external = "https://api.example.com/data"
-	}
 	if bitjitaBaseURL == "" {
 		bitjitaBaseURL = "https://bitjita.com"
-	}
-	if playerResponseFile == "" {
-		playerResponseFile = "test.json"
 	}
 	if itemNameFile == "" {
 		itemNameFile = "data/item-names.json"
@@ -55,11 +53,8 @@ func main() {
 
 	liveCacheTTL := 2 * time.Minute
 
-	repo := repository.NewExternalClient(external)
-	handler := delivery.NewProxyHandler(repo)
 	playerSource := repository.NewBitjitaPlayerSource(bitjitaBaseURL)
-	playerStore := repository.NewPlayerFileStore(playerResponseFile)
-	playerService := usecase.NewPlayerService(playerSource, playerStore)
+	playerService := usecase.NewPlayerService(playerSource)
 	playerHandler := delivery.NewPlayerHandler(playerService)
 
 	liveBitjitaCache := cache.New(liveCacheTTL)
@@ -79,7 +74,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("xp history: %v", err)
 	}
-	xpHistory.Start(context.Background())
+	xpHistory.Start(ctx)
 
 	mapUpstreamCache := cache.New(3 * time.Minute)
 	bitjitaProxyHandler := delivery.NewBitjitaProxyHandler(bitjitaDataCache)
@@ -97,10 +92,9 @@ func main() {
 	// The full market listing is ~10 MB; names and buy/sell flags drift slowly.
 	marketCatalog := repository.NewMarketCatalog(bitjitaDataCache, 30*time.Minute)
 	smithingOre := repository.NewSmithingOre(bitjitaDataCache, 5*time.Minute, 10*time.Minute)
-	go smithingOre.Run()
+	go smithingOre.Run(ctx)
 	storageCapacity := repository.NewStorageCapacity(bitjitaDataCache, 24*time.Hour)
 
-	http.HandleFunc("/api/data", handler)
 	http.HandleFunc("/api/health", delivery.NewHealthHandler())
 	http.HandleFunc("/api/ping", delivery.NewPingHandler())
 	http.HandleFunc("/api/players/", playerHandler)
@@ -136,12 +130,27 @@ func main() {
 	}
 
 	log.Printf(
-		"Starting backend on %s, proxy -> %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, dashboards -> %s, player-response-file -> %s, item-name-file -> %s, rate limit %.0f/s burst %d",
-		addr, external, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, dashboardDir, playerResponseFile, itemNameFile, rateLimitRPS, rateLimitBurst,
+		"Starting backend on %s, bitjita -> %s, bitjita-cache -> %s, xp-history -> %s, dashboards -> %s, item-name-file -> %s, rate limit %.0f/s burst %d",
+		addr, bitjitaBaseURL, bitjitaCacheDir, xpHistoryDir, dashboardDir, itemNameFile, rateLimitRPS, rateLimitBurst,
 	)
-	if err := server.ListenAndServe(); err != nil {
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.ListenAndServe() }()
+	select {
+	case err := <-serveErr:
 		log.Fatal(err)
+	case <-ctx.Done():
 	}
+
+	// Docker waits 10 s after SIGTERM before killing, so finish in-flight
+	// requests within 8 s and then save what is only in memory.
+	log.Print("Shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
+	xpHistory.Flush()
+	log.Print("Stopped")
 }
 
 func envFloat(name string, fallback float64) float64 {

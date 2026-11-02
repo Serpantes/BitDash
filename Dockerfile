@@ -6,10 +6,10 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.20-alpine AS backend-build
+FROM golang:1.25-alpine AS backend-build
 
 WORKDIR /app
-COPY backend/go.mod ./
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
 RUN CGO_ENABLED=0 go build -o /bitdash ./cmd/server
@@ -33,7 +33,7 @@ ENV PORT=8090 \
   FRONTEND_DIST=/app/frontend/dist \
   ITEM_NAME_FILE=/var/lib/bitdash/item-names.json \
   BITJITA_CACHE_DIR=/var/lib/bitdash/bitjita-cache \
-  PLAYER_RESPONSE_FILE=/var/lib/bitdash/players.json \
+\
   BITJITA_BASE_URL=https://bitjita.com
 
 EXPOSE 8090

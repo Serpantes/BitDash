@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -188,13 +189,15 @@ func NewSmithingOre(bitjita *BitjitaCache, setupTTL, marketTTL time.Duration) *S
 
 // Run builds the chains ahead of the first request and keeps the market books fresh, so
 // requests never wait on BitJita's order books.
-func (s *SmithingOre) Run() {
+func (s *SmithingOre) Run(ctx context.Context) {
 	if _, err := s.Chains(); err != nil {
 		log.Printf("smithing ore chains: %v", err)
 	}
 	s.marketMu.Lock()
 	s.market = s.loadMarketFromDisk()
 	s.marketMu.Unlock()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
 	for {
 		s.marketMu.Lock()
 		stale := s.market == nil || time.Since(time.UnixMilli(s.market.FetchedAt)) > s.marketTTL
@@ -204,7 +207,11 @@ func (s *SmithingOre) Run() {
 				log.Printf("smithing ore market: %v", err)
 			}
 		}
-		time.Sleep(time.Minute)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
