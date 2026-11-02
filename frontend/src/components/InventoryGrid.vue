@@ -51,12 +51,13 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { formatNumber } from '../i18n'
 import { useItemCache } from '../composables/useItemCache'
-import { compactQuantity, inventoryColumns, inventoryPanels, moveInSection, slotWidth } from '../inventoryLayout'
+import { compactQuantity, GAME_COLS, inventoryLayout, inventoryPanels, moveInSection } from '../inventoryLayout'
 import ItemCard from './ItemCard.vue'
 
 const FIXED_SLOT_PX = 34
 
-// The pockets of one storage, ten to a row as in game: item pockets, then cargo pockets.
+// The pockets of one storage in whole game rows (ten pockets; five or twenty when that fills
+// the space better): item pockets, then cargo pockets.
 // With `fill` the pockets grow to use the space the grid is given.
 export default {
   name: 'InventoryGrid',
@@ -75,12 +76,13 @@ export default {
     const { resolveItem } = useItemCache()
     const root = ref(null)
     const box = reactive({ width: 0, height: 0 })
-    const columns = computed(() => inventoryColumns())
-    const panels = computed(() => inventoryPanels(props.sections, props.split, columns.value))
-    const slotPx = computed(() => {
-      if (!props.fill || !box.width || !box.height) return FIXED_SLOT_PX
-      return Math.floor(slotWidth(panels.value, box.width, box.height, columns.value) * 10) / 10
+    const layout = computed(() => {
+      if (props.fill && box.width && box.height) return inventoryLayout(props.sections, props.split, box.width, box.height)
+      return { cols: GAME_COLS, panels: inventoryPanels(props.sections, props.split), slot: FIXED_SLOT_PX }
     })
+    const columns = computed(() => layout.value.cols)
+    const panels = computed(() => layout.value.panels)
+    const slotPx = computed(() => Math.floor(layout.value.slot * 10) / 10)
 
     let observer = null
     onMounted(() => {

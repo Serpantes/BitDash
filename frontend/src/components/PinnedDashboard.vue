@@ -500,7 +500,7 @@ import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpH
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
 import { formatNumber, intlLocale, t } from '../i18n'
-import { ensureStorageCapacities, hasContents, inventoryPanels, inventorySections, MIN_SLOT_PX, saveArrangement, slotWidth } from '../inventoryLayout'
+import { ensureStorageCapacities, hasContents, inventoryLayout, inventorySections, MIN_SLOT_PX, saveArrangement } from '../inventoryLayout'
 import AppIcon from './AppIcon.vue'
 import ItemCard from './ItemCard.vue'
 import InventoryGrid from './InventoryGrid.vue'
@@ -1422,8 +1422,8 @@ export default {
       return inventorySections(inventorySlots(inventoryId), meta)
     }
     function inventoryFitsSmallTile(inventoryId) {
-      const panels = inventoryPanels(inventorySectionsFor(inventoryId), false)
-      return slotWidth(panels, INVENTORY_BODY_WIDTH_PX, INVENTORY_BODY_HEIGHT_PX) >= MIN_SLOT_PX
+      const { slot } = inventoryLayout(inventorySectionsFor(inventoryId), false, INVENTORY_BODY_WIDTH_PX, INVENTORY_BODY_HEIGHT_PX)
+      return slot >= MIN_SLOT_PX
     }
     // A wide inventory tile puts its cargo next to the items instead of below them.
     function inventorySplit(inventoryId) {

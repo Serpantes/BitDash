@@ -12,7 +12,7 @@ export const PANEL_GAP_PX = 14
 export const SLOT_RATIO = 64 / 52
 // Below this width a tile is too cramped and the storage takes a wide one.
 export const MIN_SLOT_PX = 26
-const MAX_SLOT_PX = 48
+const MAX_SLOT_PX = 60
 
 const CAPACITY_STORAGE_KEY = 'bitdash.storageCapacity'
 const CAPACITY_TTL_MS = 24 * 60 * 60 * 1000
@@ -109,10 +109,10 @@ function cargoPerRow(cols) {
   return Math.max(1, Math.floor(cols / 2))
 }
 
-// As wide as in game, unless the screen is narrower; cargo needs an even count.
-export function inventoryColumns(maxCols = GAME_COLS) {
-  const cols = Math.max(2, Math.min(GAME_COLS, maxCols))
-  return cols - (cols % 2)
+// Row widths that keep every game row whole: half a row, a row, or two rows side by side.
+// Half rows are for item-only storages; cargo would break its five-per-row runs.
+function rowWidthChoices(sections) {
+  return sections.cargo.length ? [GAME_COLS, GAME_COLS * 2] : [GAME_COLS, GAME_COLS / 2, GAME_COLS * 2]
 }
 
 function perRow(kind, cols) {
@@ -154,6 +154,18 @@ export function slotWidth(panels, width, height, cols = GAME_COLS) {
     return (usable / rows - SLOT_GAP_PX) / SLOT_RATIO
   }))
   return Math.max(0, Math.min(MAX_SLOT_PX, byWidth, byHeight))
+}
+
+// The row width (5, 10 or 20 pockets) with the largest pockets for the box, ten unless another
+// is clearly better, and the panels and pocket width that go with it.
+export function inventoryLayout(sections, split, width, height) {
+  let best = null
+  for (const cols of rowWidthChoices(sections)) {
+    const panels = inventoryPanels(sections, split, cols)
+    const slot = slotWidth(panels, width, height, cols)
+    if (!best || slot > best.slot * 1.05) best = { cols, panels, slot }
+  }
+  return best
 }
 
 export function compactQuantity(quantity) {
