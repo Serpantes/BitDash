@@ -6,6 +6,13 @@ export default {
   app: {
     language: 'Interface language',
     tabs: { dashboard: 'Dashboard', server: 'Servers' },
+    footer: {
+      disclaimer: 'BitDash is an unofficial fan project, not affiliated with or endorsed by Clockwork Labs. BitCraft and its names, icons and game data belong to Clockwork Labs.',
+      data: 'Game data:',
+      source: 'Source code on GitHub',
+      feedback: 'Feedback and bug reports',
+      cookie: 'The site keeps an anonymous ID in a cookie to save your dashboard. No accounts, analytics or ads.',
+    },
   },
   status: {
     down: 'unavailable',

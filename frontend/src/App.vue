@@ -26,6 +26,15 @@
       <PinnedDashboard v-if="activeTab === 'dashboard'" />
       <Dashboard v-else-if="activeTab === 'server'" />
     </main>
+    <footer class="app-footer">
+      <p>{{ t('app.footer.disclaimer') }}</p>
+      <p>
+        {{ t('app.footer.data') }} <a href="https://bitjita.com" target="_blank" rel="noopener">BitJita</a>
+        · <a href="https://github.com/Serpantes/BitDash" target="_blank" rel="noopener">{{ t('app.footer.source') }}</a>
+        · <a href="https://github.com/Serpantes/BitDash/issues" target="_blank" rel="noopener">{{ t('app.footer.feedback') }}</a>
+      </p>
+      <p>{{ t('app.footer.cookie') }}</p>
+    </footer>
   </div>
 </template>
 
@@ -45,7 +54,7 @@ export default {
       { id: 'dashboard', get label() { return t('app.tabs.dashboard') } },
       { id: 'server', get label() { return t('app.tabs.server') } },
     ]
-    return { activeTab, tabs }
+    return { activeTab, tabs, t }
   },
 }
 </script>
@@ -107,4 +116,15 @@ export default {
 .app-actions:empty { display: none; }
 .app-status { display: flex; align-items: center; gap: 8px; }
 .app-actions:empty + .app-status { margin-left: auto; }
+.app-footer {
+  margin: 32px auto 0;
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.app-footer p { margin: 4px 0; }
+.app-footer a { color: var(--muted-strong); }
+.app-footer a:hover { color: var(--text); }
 </style>
