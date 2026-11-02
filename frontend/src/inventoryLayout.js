@@ -2,12 +2,17 @@ import { shallowRef } from 'vue'
 
 // Inventory pockets as the game lays them out: item pockets first, then cargo pockets, each
 // in pocket order. BitJita lists only filled pockets; the backend adds `slot` (the pocket index
-// within its section) and remembers it between listings, so stacks keep their place.
+// within its section), exact from the game's database replica when it has the storage.
 
-export const SLOT_PX = 32
 export const SLOT_GAP_PX = 3
-// The gap between the item and cargo pockets.
+// The gap between the item and cargo pockets, and between panels drawn side by side.
 export const SECTION_GAP_PX = 9
+export const PANEL_GAP_PX = 14
+// Pockets are taller than wide, as in game (52 × 64).
+export const SLOT_RATIO = 64 / 52
+// Below this width a tile is too cramped and the storage takes a wide one.
+export const MIN_SLOT_PX = 26
+const MAX_SLOT_PX = 48
 
 const CAPACITY_STORAGE_KEY = 'bitdash.storageCapacity'
 const CAPACITY_TTL_MS = 24 * 60 * 60 * 1000
@@ -104,30 +109,51 @@ function cargoPerRow(cols) {
   return Math.max(1, Math.floor(cols / 2))
 }
 
-function sectionHeights(sections, cols) {
-  const rows = [
-    sections.items.length ? Math.ceil(sections.items.length / cols) : 0,
-    sections.cargo.length ? Math.ceil(sections.cargo.length / cargoPerRow(cols)) : 0,
-  ]
-  return rows.filter(Boolean).map((n) => n * (SLOT_PX + SLOT_GAP_PX) - SLOT_GAP_PX)
-}
-
-// Height of the pockets with the item and cargo sections one above the other, or side by side.
-export function sectionsHeight(sections, cols, sideBySide = false) {
-  const heights = sectionHeights(sections, cols)
-  if (!heights.length) return 0
-  if (sideBySide) return Math.max(...heights)
-  return heights.reduce((a, b) => a + b, 0) + SECTION_GAP_PX * (heights.length - 1)
-}
-
-export function columnsForWidth(width) {
-  return Math.max(1, Math.floor((width + SLOT_GAP_PX) / (SLOT_PX + SLOT_GAP_PX)))
-}
-
 // As wide as in game, unless the screen is narrower; cargo needs an even count.
 export function inventoryColumns(maxCols = GAME_COLS) {
   const cols = Math.max(2, Math.min(GAME_COLS, maxCols))
   return cols - (cols % 2)
+}
+
+function perRow(kind, cols) {
+  return kind === 'cargo' ? cargoPerRow(cols) : cols
+}
+
+// How the pockets are drawn: panels side by side, each holding whole rows of one or both
+// sections ("parts", with the pocket index each starts at). Stacked, the cargo goes under the
+// items in one panel; split, items and cargo get a panel each, and a lone section is cut in two
+// halves of whole rows, so every row still reads as in game.
+export function inventoryPanels(sections, split, cols = GAME_COLS) {
+  const parts = [
+    { kind: 'item', pockets: sections.items, offset: 0 },
+    { kind: 'cargo', pockets: sections.cargo, offset: 0 },
+  ].filter((part) => part.pockets.length)
+  if (!split) return parts.length ? [{ parts }] : []
+  if (parts.length > 1) return parts.map((part) => ({ parts: [part] }))
+  if (!parts.length) return []
+  const [part] = parts
+  const rowSize = perRow(part.kind, cols)
+  const rows = Math.ceil(part.pockets.length / rowSize)
+  if (rows < 2) return [{ parts }]
+  const cut = Math.ceil(rows / 2) * rowSize
+  return [
+    { parts: [{ ...part, pockets: part.pockets.slice(0, cut) }] },
+    { parts: [{ ...part, pockets: part.pockets.slice(cut), offset: cut }] },
+  ]
+}
+
+// The widest pocket that lets every panel fit the given box.
+export function slotWidth(panels, width, height, cols = GAME_COLS) {
+  if (!panels.length) return MAX_SLOT_PX
+  const panelWidth = (width - PANEL_GAP_PX * (panels.length - 1)) / panels.length
+  // Each pocket keeps half a gap on either side.
+  const byWidth = (panelWidth - 1) / cols - SLOT_GAP_PX
+  const byHeight = Math.min(...panels.map(({ parts }) => {
+    const rows = parts.reduce((sum, part) => sum + Math.ceil(part.pockets.length / perRow(part.kind, cols)), 0)
+    const usable = height - SECTION_GAP_PX * (parts.length - 1) + SLOT_GAP_PX * parts.length
+    return (usable / rows - SLOT_GAP_PX) / SLOT_RATIO
+  }))
+  return Math.max(0, Math.min(MAX_SLOT_PX, byWidth, byHeight))
 }
 
 export function compactQuantity(quantity) {

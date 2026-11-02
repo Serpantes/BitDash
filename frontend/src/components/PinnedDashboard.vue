@@ -226,7 +226,7 @@
               v-else
               class="dash-inventory"
               :sections="inventorySectionsFor(item.inventoryId)"
-              :side-by-side="inventorySideBySide(item.inventoryId)"
+              :split="inventorySplit(item.inventoryId)"
               :arrangeable="Boolean(arranging[item.inventoryId])"
               @arrange="arrangeInventory(item.inventoryId, $event)"
             />
@@ -500,7 +500,7 @@ import { appendLivePoint, mergeHistoryPoints, splitHistorySamples } from '../xpH
 import { applyTileDrop, computeTileLayout, savedTilePosition } from '../dashboardLayout'
 import { useTileDrag, useTileFlip } from '../composables/useTileDrag'
 import { formatNumber, intlLocale, t } from '../i18n'
-import { ensureStorageCapacities, hasContents, inventoryColumns, inventorySections, saveArrangement, sectionsHeight } from '../inventoryLayout'
+import { ensureStorageCapacities, hasContents, inventoryPanels, inventorySections, MIN_SLOT_PX, saveArrangement, slotWidth } from '../inventoryLayout'
 import AppIcon from './AppIcon.vue'
 import ItemCard from './ItemCard.vue'
 import InventoryGrid from './InventoryGrid.vue'
@@ -512,8 +512,9 @@ import PlannerBlock from './PlannerBlock.vue'
 const SEARCH_DEBOUNCE_MS = 500
 const TILE_WIDTH_PX = 380
 const TILE_GAP_PX = 14
-// Room for pockets inside an inventory tile: the tile minus its frame, heading and padding.
-const INVENTORY_BODY_HEIGHT_PX = 366
+// Room for pockets inside a small inventory tile: the tile minus its frame, heading and padding.
+const INVENTORY_BODY_WIDTH_PX = 358
+const INVENTORY_BODY_HEIGHT_PX = 375
 const WIZARD_PREVIEW_MAX = 24
 const MARKET_TRADES_LIMIT = 100
 const MARKET_BOOK_CONCURRENCY = 4
@@ -1421,10 +1422,11 @@ export default {
       return inventorySections(inventorySlots(inventoryId), meta)
     }
     function inventoryFitsSmallTile(inventoryId) {
-      return sectionsHeight(inventorySectionsFor(inventoryId), inventoryColumns()) <= INVENTORY_BODY_HEIGHT_PX
+      const panels = inventoryPanels(inventorySectionsFor(inventoryId), false)
+      return slotWidth(panels, INVENTORY_BODY_WIDTH_PX, INVENTORY_BODY_HEIGHT_PX) >= MIN_SLOT_PX
     }
     // A wide inventory tile puts its cargo next to the items instead of below them.
-    function inventorySideBySide(inventoryId) {
+    function inventorySplit(inventoryId) {
       return dashboardCardSpan(inventoryId) === 2
     }
     function isInventoryBlock(item) {
@@ -2174,7 +2176,7 @@ export default {
       pinned, isPinned, unpin, state, drag, dropCells, gridArea, onTilePointerDown, layoutInfo, rootRef, wizard, wizardTitle, wizardKicker, wizardSearchesPlayers,
       gridRef, wizardSearchInput, dashboardCols, dashboardUpdatedLabel, dashboardRefreshing,
       dashboardCardClass, dashboardCardStyle,
-      inventorySectionsFor, inventorySideBySide, isInventoryBlock, arranging, arrangeInventory, hasInventoryGrid, itemMeta,
+      inventorySectionsFor, inventorySplit, isInventoryBlock, arranging, arrangeInventory, hasInventoryGrid, itemMeta,
       blockType, blockHeading, blockCanResize, blockIsLarge, toggleBlockSize, vitalsRows,
       isCharacterBlock, isMarketBlock, isPlannerBlock, isMapBlock,
       mapTileSize, setMapTileSize, marketTileSize, setMarketTileSize,
@@ -2289,7 +2291,7 @@ export default {
 .dash-card-body--map { padding: 6px 8px 8px; }
 .dash-card-body--skill { padding-top: 6px; }
 
-.dash-inventory { flex: 1; overflow-y: auto; }
+.dash-card-body--inventory { padding: 6px 10px 10px; }
 
 .vitals { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .vital { display: flex; flex-direction: column; gap: 5px; }

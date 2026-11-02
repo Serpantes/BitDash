@@ -43,7 +43,7 @@
           </div>
 
           <div v-if="!hasInventoryGrid(inv)" class="empty-inv">{{ t('common.empty') }}</div>
-          <InventoryGrid v-else :sections="sectionsFor(inv)" side-by-side />
+          <InventoryGrid v-else :sections="sectionsFor(inv)" split :fill="false" />
         </div>
         <div v-if="inventories.length === 0" class="card placeholder">{{ t('inventoryPage.noInventories') }}</div>
       </template>
